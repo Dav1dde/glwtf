@@ -87,6 +87,22 @@ class Window : BaseGLFWEventHandler {
         return glfwGetWindowParam(window, param);
     }
 
+    void set_input_mode(int mode, int value) {
+        glfwSetInputMode(window, mode, value);
+    }
+
+    int get_input_mode(int mode) {
+        return glfwGetInputMode(window, mode);
+    }
+
+    void make_context_current() {
+        glfwMakeContextCurrent(window);
+    }
+
+    void swap_buffers() {
+        glfwSwapBuffers(window);
+    }
+
     // callbacks ------
     // window
     bool delegate() on_close;
