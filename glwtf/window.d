@@ -80,13 +80,13 @@ class Window : BaseGLFWEventHandler {
         glfwRestoreWindow(window);
     }
 
-    void show() {
-        glfwShowWindow(window);
-    }
-
-    void hide() {
-        glfwHideWindow(window);
-    }
+//     void show() {
+//         glfwShowWindow(window);
+//     }
+// 
+//     void hide() {
+//         glfwHideWindow(window);
+//     }
 
     int get_param(int param) {
         return glfwGetWindowParam(window, param);
