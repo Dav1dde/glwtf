@@ -29,6 +29,11 @@ class Window : BaseGLFWEventHandler {
         on_mouse_button_up.connect(&_on_mouse_button_up);
     }
 
+    this(void* window) {
+        this.window = window;
+        register_callbacks(window);
+    }
+
     void set_hint(int target, int hint) {
         glfwWindowHint(target, hint);
     }
