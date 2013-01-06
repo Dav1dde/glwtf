@@ -129,16 +129,16 @@ class BaseGLFWEventHandler : AEventHandler {
     package void register_callbacks(void* window) {
         glfwSetWindowUserPointer(window, cast(void *)this);
 
-        glfwSetWindowSizeCallback(&window_resize_callback);
-        glfwSetWindowCloseCallback(&window_close_callback);
-        glfwSetWindowRefreshCallback(&window_refresh_callback);
-        glfwSetWindowFocusCallback(&window_focus_callback);
-        glfwSetWindowIconifyCallback(&window_iconify_callback);
+        glfwSetWindowSizeCallback(window, &window_resize_callback);
+        glfwSetWindowCloseCallback(window, &window_close_callback);
+        glfwSetWindowRefreshCallback(window, &window_refresh_callback);
+        glfwSetWindowFocusCallback(window, &window_focus_callback);
+        glfwSetWindowIconifyCallback(window, &window_iconify_callback);
 
-        glfwSetKeyCallback(&key_callback);
-        glfwSetCharCallback(&char_callback);
-        glfwSetMouseButtonCallback(&mouse_button_callback);
-        glfwSetCursorPosCallback(&cursor_pos_callback);
-        glfwSetScrollCallback(&scroll_callback);
+        glfwSetKeyCallback(window, &key_callback);
+        glfwSetCharCallback(window, &char_callback);
+        glfwSetMouseButtonCallback(window, &mouse_button_callback);
+        glfwSetCursorPosCallback(window, &cursor_pos_callback);
+        glfwSetScrollCallback(window, &scroll_callback);
     }
 }
