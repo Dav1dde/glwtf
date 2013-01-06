@@ -113,4 +113,12 @@ class Window : BaseGLFWEventHandler {
     protected void _on_mouse_button_up(int button) {
         mousemap[button] = false;
     }
+
+    bool is_key_down(int key) {
+        return keymap[key];
+    }
+
+    bool is_mouse_down(int button) {
+        return mousemap[button];
+    }
 }
