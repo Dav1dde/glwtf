@@ -62,16 +62,6 @@ class Window : BaseGLFWEventHandler {
         return rect;
     }
 
-    @property void position(Rect rect) {
-        glfwSetWindowPos(window, rect.x, rect.y);
-    }
-
-    @property Rect position() {
-        Rect rect;
-        glfwGetWindowPos(window, &rect.x, &rect.y);
-        return rect;
-    }
-
     void iconify() {
         glfwIconifyWindow(window);
     }
