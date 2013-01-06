@@ -38,8 +38,8 @@ class Window : BaseGLFWEventHandler {
         glfwWindowHint(target, hint);
     }
 
-    void create(int width, int height, int mode, string title, void* share = null) {
-        window = glfwCreateWindow(width, height, mode, title.toStringz(), share);
+    void create(int width, int height, string title, void* monitor = null, void* share = null) {
+        window = glfwCreateWindow(width, height, title.toStringz(), monitor, share);
         enforceEx!WindowException(window !is null, "Failed to create GLFW Window");
         register_callbacks(window);
     }
