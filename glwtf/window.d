@@ -44,8 +44,11 @@ class Window : BaseGLFWEventHandler {
         @property void window(void* window) {
             _window = window;
         }
+
+        @property bool has_window() { return _window !is null; }
     } else {
         void* window;
+        @property bool has_window() { return window !is null; }
     }
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
