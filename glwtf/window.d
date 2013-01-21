@@ -104,7 +104,7 @@ class Window : BaseGLFWEventHandler {
         register_callbacks(window);
     }
 
-    void create_highest_available_context(int width, int height, string title, void* monitor = null, void* share = null,
+    auto create_highest_available_context(int width, int height, string title, void* monitor = null, void* share = null,
                                           int opengl_profile = GLFW_OPENGL_CORE_PROFILE, bool forward_compat = true) {
         void* win = null;
 
@@ -119,7 +119,7 @@ class Window : BaseGLFWEventHandler {
             if(win !is null) {
                 window = win;
                 register_callbacks(window);
-                return;
+                return oglvt;
             }
         }
 
