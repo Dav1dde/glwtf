@@ -10,6 +10,7 @@ private {
     import std.string : toStringz;
     import std.exception : enforceEx;
     import std.functional : curry;
+    import std.typecons : Tuple;
 }
 
 
@@ -33,6 +34,10 @@ private string set_hint_property(string target, string name, bool getter=false) 
 }
 
 
+alias Tuple!(int, "major", int, "minor") OGLVT;
+immutable OGLVT[] OGLVTS = [OGLVT(4, 3), OGLVT(4, 2), OGLVT(4, 1), OGLVT(4, 0),
+                            OGLVT(3, 3), OGLVT(3, 2), OGLVT(3, 1), OGLVT(3, 0)];
+
 class Window : BaseGLFWEventHandler {
     debug {
         private void* _window;
@@ -44,11 +49,8 @@ class Window : BaseGLFWEventHandler {
         @property void window(void* window) {
             _window = window;
         }
-
-        @property bool has_window() { return _window !is null; }
     } else {
         void* window;
-        @property bool has_window() { return window !is null; }
     }
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
@@ -100,6 +102,28 @@ class Window : BaseGLFWEventHandler {
         window = glfwCreateWindow(width, height, title.toStringz(), monitor, share);
         enforceEx!WindowException(window !is null, "Failed to create GLFW Window");
         register_callbacks(window);
+    }
+
+    void create_highest_available_context(int width, int height, string title, void* monitor = null, void* share = null,
+                                          int opengl_profile = GLFW_OPENGL_CORE_PROFILE, bool forward_compat = true) {
+        void* win = null;
+
+        foreach(oglvt; OGLVTS) {
+            this.context_version_major = oglvt.major;
+            this.context_version_minor = oglvt.minor;
+            this.opengl_profile = opengl_profile;
+            this.opengl_forward_compat = forward_compat;
+
+            win = glfwCreateWindow(width, height, title.toStringz(), monitor, share);
+
+            if(win !is null) {
+                window = win;
+                register_callbacks(window);
+                return;
+            }
+        }
+
+        throw new WindowException("Unable to initialize OpenGL forward compatible context (Version >= 3.0).");
     }
 
     void destroy() {
