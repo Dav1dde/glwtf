@@ -40,17 +40,17 @@ immutable OGLVT[] OGLVTS = [OGLVT(4, 3), OGLVT(4, 2), OGLVT(4, 1), OGLVT(4, 0),
 
 class Window : BaseGLFWEventHandler {
     debug {
-        private void* _window;
+        private GLFWwindow* _window;
 
-        @property void* window() {
+        @property GLFWwindow* window() {
             assert(_window !is null, "no window created yet!");
             return _window;
         }
-        @property void window(void* window) {
+        @property void window(GLFWwindow* window) {
             _window = window;
         }
     } else {
-        void* window;
+        GLFWwindow* window;
     }
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
@@ -62,7 +62,7 @@ class Window : BaseGLFWEventHandler {
         on_mouse_button_up.connect(&_on_mouse_button_up);
     }
 
-    this(void* window) {
+    this(GLFWwindow* window) {
         this.window = window;
         register_callbacks(window);
     }
@@ -98,15 +98,15 @@ class Window : BaseGLFWEventHandler {
     mixin(set_hint_property("GLFW_POSITION_X", "position_x", true));
     mixin(set_hint_property("GLFW_POSITION_Y", "position_y", true));
 
-    void create(int width, int height, string title, void* monitor = null, void* share = null) {
+    void create(int width, int height, string title, GLFWmonitor* monitor = null, GLFWwindow* share = null) {
         window = glfwCreateWindow(width, height, title.toStringz(), monitor, share);
         enforceEx!WindowException(window !is null, "Failed to create GLFW Window");
         register_callbacks(window);
     }
 
-    auto create_highest_available_context(int width, int height, string title, void* monitor = null, void* share = null,
+    auto create_highest_available_context(int width, int height, string title, GLFWmonitor* monitor = null, GLFWwindow* share = null,
                                           int opengl_profile = GLFW_OPENGL_CORE_PROFILE, bool forward_compat = true) {
-        void* win = null;
+        GLFWwindow* win = null;
 
         foreach(oglvt; OGLVTS) {
             this.context_version_major = oglvt.major;

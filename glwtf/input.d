@@ -8,7 +8,7 @@ private {
     import std.signals;
 }
 
-AEventHandler cast_userptr(void* window)
+AEventHandler cast_userptr(GLFWwindow* window)
     out (result) { assert(result !is null, "glfwGetWindowUserPointer returned null"); }
     body {
         void* user_ptr = glfwGetWindowUserPointer(window);
@@ -26,13 +26,13 @@ void register_glfw_error_callback(void function(int, string) cb) {
 
 extern(C) {
     // window events //
-    void window_resize_callback(void* window, int width, int height) {
+    void window_resize_callback(GLFWwindow* window, int width, int height) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_resize.emit(width, height);
     }
 
-    int window_close_callback(void* window) {
+    int window_close_callback(GLFWwindow* window) {
         AEventHandler ae = cast_userptr(window);
 
         bool close = cast(int)ae._on_close();
@@ -42,26 +42,26 @@ extern(C) {
         return close;
     }
 
-    void window_refresh_callback(void* window) {
+    void window_refresh_callback(GLFWwindow* window) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_refresh.emit();
     }
 
-    void window_focus_callback(void* window, int focused) {
+    void window_focus_callback(GLFWwindow* window, int focused) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_focus.emit(focused == GLFW_PRESS);
     }
 
-    void window_iconify_callback(void* window, int iconified) {
+    void window_iconify_callback(GLFWwindow* window, int iconified) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_iconify.emit(iconified == GLFW_PRESS); // TODO: test this
     }
 
     // user input //
-    void key_callback(void* window, int key, int state) {
+    void key_callback(GLFWwindow* window, int key, int state) {
         AEventHandler ae = cast_userptr(window);
 
         if(state == GLFW_PRESS) {
@@ -71,13 +71,13 @@ extern(C) {
         }
     }
 
-    void char_callback(void* window, int c) {
+    void char_callback(GLFWwindow* window, int c) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_char.emit(cast(dchar)c);
     }
 
-    void mouse_button_callback(void* window, int button, int state) {
+    void mouse_button_callback(GLFWwindow* window, int button, int state) {
         AEventHandler ae = cast_userptr(window);
 
         if(state == GLFW_PRESS) {
@@ -87,13 +87,13 @@ extern(C) {
         }
     }
 
-    void cursor_pos_callback(void* window, int x, int y) {
+    void cursor_pos_callback(GLFWwindow* window, int x, int y) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_mouse_pos.emit(x, y);
     }
 
-    void scroll_callback(void* window, double xoffset, double yoffset) {
+    void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_scroll.emit(xoffset, yoffset);
@@ -126,7 +126,7 @@ abstract class AEventHandler {
 }
 
 class BaseGLFWEventHandler : AEventHandler {
-    package void register_callbacks(void* window) {
+    package void register_callbacks(GLFWwindow* window) {
         glfwSetWindowUserPointer(window, cast(void *)this);
 
         glfwSetWindowSizeCallback(window, &window_resize_callback);
