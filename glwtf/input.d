@@ -126,7 +126,15 @@ abstract class AEventHandler {
     mixin Signal!(double, double) on_scroll;
 }
 
+private struct SignalWraper(Args...) {
+    mixin Signal!(Args);
+}
+
 class BaseGLFWEventHandler : AEventHandler {
+    DefaultAA!(SignalWraper!(), int) single_key_down;
+    DefaultAA!(SignalWraper!(), int) single_key_up;
+    DefaultAA!(SignalWraper!(), dchar) single_char;
+    
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
     
@@ -153,11 +161,18 @@ class BaseGLFWEventHandler : AEventHandler {
         glfwSetScrollCallback(window, &scroll_callback);
     }
 
-    protected void _on_key_down(int key) {
-        keymap[key] = true;
+    protected void _on_key_down(int key) {       
+        keymap[key] = true;        
+        single_key_down[key].emit();
     }
+    
     protected void _on_key_up(int key) {
         keymap[key] = false;
+        single_key_up[key].emit();
+    }
+
+    protected void _on_char(dchar c) {
+        single_char[c].emit();
     }
 
     protected void _on_mouse_button_down(int button) {
