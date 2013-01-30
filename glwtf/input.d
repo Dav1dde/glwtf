@@ -3,6 +3,7 @@ module glwtf.input;
 
 private {
     import glwtf.glfw;
+    import glwtf.util : DefaultAA;
     
     import std.conv : to;
     import std.signals;
@@ -128,7 +129,7 @@ abstract class AEventHandler {
 class BaseGLFWEventHandler : AEventHandler {
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
-
+    
     this() {
         on_key_down.connect(&_on_key_down);
         on_key_up.connect(&_on_key_up);

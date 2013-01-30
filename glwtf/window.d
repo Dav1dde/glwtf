@@ -3,7 +3,6 @@ module glwtf.window;
 
 private {
     import glwtf.glfw;
-    import glwtf.util : DefaultAA;
     import glwtf.input : BaseGLFWEventHandler;
     import glwtf.exception : WindowException;
 
@@ -53,7 +52,13 @@ class Window : BaseGLFWEventHandler {
         GLFWwindow* window;
     }
 
+    this() {
+        super();
+    }
+
     this(GLFWwindow* window) {
+        super();
+        
         this.window = window;
         register_callbacks(window);
     }
