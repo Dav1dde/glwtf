@@ -52,15 +52,6 @@ class Window : BaseGLFWEventHandler {
     } else {
         GLFWwindow* window;
     }
-    protected DefaultAA!(bool, int, false) keymap;
-    protected DefaultAA!(bool, int, false) mousemap;
-
-    this() {
-        on_key_down.connect(&_on_key_down);
-        on_key_up.connect(&_on_key_up);
-        on_mouse_button_down.connect(&_on_mouse_button_down);
-        on_mouse_button_up.connect(&_on_mouse_button_up);
-    }
 
     this(GLFWwindow* window) {
         this.window = window;
@@ -190,28 +181,5 @@ class Window : BaseGLFWEventHandler {
         }
         
         return true;
-    }
-
-    // input
-    protected void _on_key_down(int key) {
-        keymap[key] = true;
-    }
-    protected void _on_key_up(int key) {
-        keymap[key] = false;
-    }
-    
-    protected void _on_mouse_button_down(int button) {
-        mousemap[button] = true;
-    }
-    protected void _on_mouse_button_up(int button) {
-        mousemap[button] = false;
-    }
-
-    bool is_key_down(int key) {
-        return keymap[key];
-    }
-
-    bool is_mouse_down(int button) {
-        return mousemap[button];
     }
 }
