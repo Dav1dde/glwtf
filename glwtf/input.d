@@ -126,14 +126,14 @@ abstract class AEventHandler {
     mixin Signal!(double, double) on_scroll;
 }
 
-private struct SignalWraper(Args...) {
+private struct SignalWrapper(Args...) {
     mixin Signal!(Args);
 }
 
 class BaseGLFWEventHandler : AEventHandler {
-    DefaultAA!(SignalWraper!(), int) single_key_down;
-    DefaultAA!(SignalWraper!(), int) single_key_up;
-    DefaultAA!(SignalWraper!(), dchar) single_char;
+    DefaultAA!(SignalWrapper!(), int) single_key_down;
+    DefaultAA!(SignalWrapper!(), int) single_key_up;
+    DefaultAA!(SignalWrapper!(), dchar) single_char;
     
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
