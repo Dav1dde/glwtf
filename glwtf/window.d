@@ -140,6 +140,14 @@ class Window : BaseGLFWEventHandler {
         return rect;
     }
 
+    @property int width() {
+        return size.x;
+    }
+
+    @property int height() {
+        return size.y;
+    }
+
     void iconify() {
         glfwIconifyWindow(window);
     }
