@@ -13,13 +13,10 @@ struct DefaultAA(value_type, key_type, Default...) if(Default.length < 2) {
             value_type default_ = Default[0];
         }
     } else {
-        value_type default_() {
-            value_type t;
-            return t;
-        }
+        value_type default_ = value_type.init;
     }
 
-    static if(isCallable!default_) {
+    static if(__traits(compiles, default_())) {
         static assert(is(ReturnType!(default_) : value_type), "callable returntype doesn't match value_type");
     }
 

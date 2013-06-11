@@ -4,7 +4,7 @@ module glwtf.input;
 private {
     import glwtf.glfw;
     import glwtf.util : DefaultAA;
-    
+
     import std.conv : to;
     import std.signals;
 }
@@ -113,7 +113,7 @@ abstract class AEventHandler {
     mixin Signal!() on_refresh;
     mixin Signal!(bool) on_focus;
     mixin Signal!(bool) on_iconify;
-    
+
     bool _on_close() { return true; }
 
     // input
@@ -134,17 +134,17 @@ class BaseGLFWEventHandler : AEventHandler {
     DefaultAA!(SignalWrapper!(), int) single_key_down;
     DefaultAA!(SignalWrapper!(), int) single_key_up;
     DefaultAA!(SignalWrapper!(), dchar) single_char;
-    
+
     protected DefaultAA!(bool, int, false) keymap;
     protected DefaultAA!(bool, int, false) mousemap;
-    
+
     this() {
         on_key_down.connect(&_on_key_down);
         on_key_up.connect(&_on_key_up);
         on_mouse_button_down.connect(&_on_mouse_button_down);
         on_mouse_button_up.connect(&_on_mouse_button_up);
     }
-    
+
     package void register_callbacks(GLFWwindow* window) {
         glfwSetWindowUserPointer(window, cast(void *)this);
 
@@ -161,11 +161,11 @@ class BaseGLFWEventHandler : AEventHandler {
         glfwSetScrollCallback(window, &scroll_callback);
     }
 
-    protected void _on_key_down(int key) {       
-        keymap[key] = true;        
+    protected void _on_key_down(int key) {
+        keymap[key] = true;
         single_key_down[key].emit();
     }
-    
+
     protected void _on_key_up(int key) {
         keymap[key] = false;
         single_key_up[key].emit();
