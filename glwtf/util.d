@@ -32,8 +32,7 @@ struct DefaultAA(value_type, key_type, Default...) if(Default.length < 2) {
         if(value_type* value = key in _store) {
             return *value;
         } else {
-            value_type d = _get_default();
-            _store[key] = d;
+            _store[key] = _get_default();
             return _store[key];
         }
     }
