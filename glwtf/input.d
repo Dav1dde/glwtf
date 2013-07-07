@@ -33,14 +33,15 @@ extern(C) {
         ae.on_resize.emit(width, height);
     }
 
-    int window_close_callback(GLFWwindow* window) {
+    void window_close_callback(GLFWwindow* window) {
         AEventHandler ae = cast_userptr(window);
 
         bool close = cast(int)ae._on_close();
         if(close) {
             ae.on_closing.emit();
+        } else {
+            glfwSetWindowShouldClose(window, 0);
         }
-        return close;
     }
 
     void window_refresh_callback(GLFWwindow* window) {
@@ -62,33 +63,33 @@ extern(C) {
     }
 
     // user input //
-    void key_callback(GLFWwindow* window, int key, int state) {
+    void key_callback(GLFWwindow* window, int key, int scancode, int state, int modifier) {
         AEventHandler ae = cast_userptr(window);
 
-        if(state == GLFW_PRESS) {
-            ae.on_key_down.emit(key);
+        if(state == GLFW_PRESS || GLFW_REPEAT) {
+            ae.on_key_down.emit(key, scancode, modifier);
         } else {
-            ae.on_key_up.emit(key);
+            ae.on_key_up.emit(key, scancode, modifier);
         }
     }
 
-    void char_callback(GLFWwindow* window, int c) {
+    void char_callback(GLFWwindow* window, uint c) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_char.emit(cast(dchar)c);
     }
 
-    void mouse_button_callback(GLFWwindow* window, int button, int state) {
+    void mouse_button_callback(GLFWwindow* window, int button, int state, int modifier) {
         AEventHandler ae = cast_userptr(window);
 
         if(state == GLFW_PRESS) {
-            ae.on_mouse_button_down.emit(button);
+            ae.on_mouse_button_down.emit(button, modifier);
         } else {
-            ae.on_mouse_button_up.emit(button);
+            ae.on_mouse_button_up.emit(button, modifier);
         }
     }
 
-    void cursor_pos_callback(GLFWwindow* window, int x, int y) {
+    void cursor_pos_callback(GLFWwindow* window, double x, double y) {
         AEventHandler ae = cast_userptr(window);
 
         ae.on_mouse_pos.emit(x, y);
@@ -117,12 +118,12 @@ abstract class AEventHandler {
     bool _on_close() { return true; }
 
     // input
-    mixin Signal!(int) on_key_down;
-    mixin Signal!(int) on_key_up;
+    mixin Signal!(int, int, int) on_key_down;
+    mixin Signal!(int, int, int) on_key_up;
     mixin Signal!(dchar) on_char;
-    mixin Signal!(int) on_mouse_button_down;
-    mixin Signal!(int) on_mouse_button_up;
-    mixin Signal!(int, int) on_mouse_pos;
+    mixin Signal!(int, int) on_mouse_button_down;
+    mixin Signal!(int, int) on_mouse_button_up;
+    mixin Signal!(double, double) on_mouse_pos;
     mixin Signal!(double, double) on_scroll;
 }
 
@@ -165,12 +166,12 @@ class BaseGLFWEventHandler : AEventHandler {
         glfwSetScrollCallback(window, &scroll_callback);
     }
 
-    protected void _on_key_down(int key) {
+    protected void _on_key_down(int key, int scancode, int modifier) {
         keymap[key] = true;
         single_key_down[key].emit();
     }
 
-    protected void _on_key_up(int key) {
+    protected void _on_key_up(int key, int scancode, int modifier) {
         keymap[key] = false;
         single_key_up[key].emit();
     }
@@ -179,10 +180,10 @@ class BaseGLFWEventHandler : AEventHandler {
         single_char[c].emit();
     }
 
-    protected void _on_mouse_button_down(int button) {
+    protected void _on_mouse_button_down(int button, int modifier) {
         mousemap[button] = true;
     }
-    protected void _on_mouse_button_up(int button) {
+    protected void _on_mouse_button_up(int button, int modifier) {
         mousemap[button] = false;
     }
 

@@ -25,7 +25,7 @@ private string set_hint_property(string target, string name, bool getter=false) 
 
     if(getter) {
         ret ~=   `@property int ` ~ name ~ `() {
-                      return get_param(` ~ target ~ `);
+                      return get_attrib(` ~ target ~ `);
                   }`;
     }
 
@@ -91,8 +91,6 @@ class Window : BaseGLFWEventHandler {
     mixin(set_hint_property("GLFW_CONTEXT_ROBUSTNESS", "context_robustness", true));
     mixin(set_hint_property("GLFW_RESIZABLE", "resizable", true));
     mixin(set_hint_property("GLFW_VISIBLE", "visible", true));
-    mixin(set_hint_property("GLFW_POSITION_X", "position_x", true));
-    mixin(set_hint_property("GLFW_POSITION_Y", "position_y", true));
 
     void create(int width, int height, string title, GLFWmonitor* monitor = null, GLFWwindow* share = null) {
         window = glfwCreateWindow(width, height, title.toStringz(), monitor, share);
@@ -164,8 +162,8 @@ class Window : BaseGLFWEventHandler {
 //         glfwHideWindow(window);
 //     }
 
-    int get_param(int param) {
-        return glfwGetWindowParam(window, param);
+    int get_attrib(int attrib) {
+        return glfwGetWindowAttrib(window, attrib);
     }
 
     void set_input_mode(int mode, int value) {
