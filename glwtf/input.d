@@ -3,7 +3,6 @@ module glwtf.input;
 
 private {
     import glwtf.glfw;
-    import glwtf.util : DefaultAA;
 
     import std.conv : to;
     import std.signals;
@@ -138,13 +137,31 @@ private class SignalWrapper(Args...) {
     }
 }
 
-class BaseGLFWEventHandler : AEventHandler {
-    DefaultAA!(SignalWrapper!(), int, SignalWrapper!().new_) single_key_down;
-    DefaultAA!(SignalWrapper!(), int, SignalWrapper!().new_) single_key_up;
-    DefaultAA!(SignalWrapper!(), dchar, SignalWrapper!().new_) single_char;
+private struct SignalArray(Args...) {
+    SignalWrapper!(Args)[GLFW_KEY_LAST] signals;
 
-    protected DefaultAA!(bool, int, false) keymap;
-    protected DefaultAA!(bool, int, false) mousemap;
+    auto opIndex(size_t index) {
+        if(signals[index] !is null) {
+            return signals[index];
+        }
+
+        return signals[index] = new SignalWrapper!(Args);
+    }
+
+    void emit_if_connected(size_t index, Args args) {
+        auto signal = signals[index];
+        if(signal !is null) {
+            signal.emit(args);
+        }
+    }
+}
+
+class BaseGLFWEventHandler : AEventHandler {
+    SignalArray!() single_key_down;
+    SignalArray!() single_key_up;
+
+    protected bool[GLFW_KEY_LAST] keymap;
+    protected bool[GLFW_MOUSE_BUTTON_LAST] mousemap;
 
     this() {
         on_key_down.connect(&_on_key_down);
@@ -171,16 +188,12 @@ class BaseGLFWEventHandler : AEventHandler {
 
     protected void _on_key_down(int key, int scancode, int modifier) {
         keymap[key] = true;
-        single_key_down[key].emit();
+        single_key_down.emit_if_connected(key);
     }
 
     protected void _on_key_up(int key, int scancode, int modifier) {
         keymap[key] = false;
-        single_key_up[key].emit();
-    }
-
-    protected void _on_char(dchar c) {
-        single_char[c].emit();
+        single_key_up.emit_if_connected(key);
     }
 
     protected void _on_mouse_button_down(int button, int modifier) {
