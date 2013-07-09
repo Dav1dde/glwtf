@@ -3,9 +3,9 @@ module glwtf.input;
 
 private {
     import glwtf.glfw;
+    import glwtf.signals;
 
     import std.conv : to;
-    import std.signals;
 }
 
 AEventHandler cast_userptr(GLFWwindow* window)
@@ -110,55 +110,29 @@ extern(C) {
 
 abstract class AEventHandler {
     // window
-    mixin Signal!(int, int) on_resize;
-    mixin Signal!() on_closing;
-    mixin Signal!() on_refresh;
-    mixin Signal!(bool) on_focus;
-    mixin Signal!(bool) on_iconify;
+    Signal!(int, int) on_resize;
+    Signal!() on_closing;
+    Signal!() on_refresh;
+    Signal!(bool) on_focus;
+    Signal!(bool) on_iconify;
 
     bool _on_close() { return true; }
 
     // input
-    mixin Signal!(int, int, int) on_key_down;
-    mixin Signal!(int, int, int) on_key_repeat;
-    mixin Signal!(int, int, int) on_key_up;
-    mixin Signal!(dchar) on_char;
-    mixin Signal!(int, int) on_mouse_button_down;
-    mixin Signal!(int, int) on_mouse_button_up;
-    mixin Signal!(double, double) on_mouse_pos;
-    mixin Signal!(double, double) on_scroll;
+    Signal!(int, int, int) on_key_down;
+    Signal!(int, int, int) on_key_repeat;
+    Signal!(int, int, int) on_key_up;
+    Signal!(dchar) on_char;
+    Signal!(int, int) on_mouse_button_down;
+    Signal!(int, int) on_mouse_button_up;
+    Signal!(double, double) on_mouse_pos;
+    Signal!(double, double) on_scroll;
 }
 
-private class SignalWrapper(Args...) {
-    mixin Signal!(Args);
-
-    static auto new_() {
-        return new SignalWrapper!(Args);
-    }
-}
-
-private struct SignalArray(Args...) {
-    SignalWrapper!(Args)[GLFW_KEY_LAST] signals;
-
-    auto opIndex(size_t index) {
-        if(signals[index] !is null) {
-            return signals[index];
-        }
-
-        return signals[index] = new SignalWrapper!(Args);
-    }
-
-    void emit_if_connected(size_t index, Args args) {
-        auto signal = signals[index];
-        if(signal !is null) {
-            signal.emit(args);
-        }
-    }
-}
 
 class BaseGLFWEventHandler : AEventHandler {
-    SignalArray!() single_key_down;
-    SignalArray!() single_key_up;
+    Signal!()[GLFW_KEY_LAST] single_key_down;
+    Signal!()[GLFW_KEY_LAST] single_key_up;
 
     protected bool[GLFW_KEY_LAST] keymap;
     protected bool[GLFW_MOUSE_BUTTON_LAST] mousemap;
@@ -188,12 +162,12 @@ class BaseGLFWEventHandler : AEventHandler {
 
     protected void _on_key_down(int key, int scancode, int modifier) {
         keymap[key] = true;
-        single_key_down.emit_if_connected(key);
+        single_key_down[key].emit();
     }
 
     protected void _on_key_up(int key, int scancode, int modifier) {
         keymap[key] = false;
-        single_key_up.emit_if_connected(key);
+        single_key_up[key].emit();
     }
 
     protected void _on_mouse_button_down(int button, int modifier) {
