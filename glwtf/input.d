@@ -66,8 +66,10 @@ extern(C) {
     void key_callback(GLFWwindow* window, int key, int scancode, int state, int modifier) {
         AEventHandler ae = cast_userptr(window);
 
-        if(state == GLFW_PRESS || GLFW_REPEAT) {
+        if(state == GLFW_PRESS) {
             ae.on_key_down.emit(key, scancode, modifier);
+        } else if(state == GLFW_REPEAT) {
+            ae.on_key_repeat.emit(key, scancode, modifier);
         } else {
             ae.on_key_up.emit(key, scancode, modifier);
         }
@@ -119,6 +121,7 @@ abstract class AEventHandler {
 
     // input
     mixin Signal!(int, int, int) on_key_down;
+    mixin Signal!(int, int, int) on_key_repeat;
     mixin Signal!(int, int, int) on_key_up;
     mixin Signal!(dchar) on_char;
     mixin Signal!(int, int) on_mouse_button_down;

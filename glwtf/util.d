@@ -70,4 +70,7 @@ unittest {
     assert(mydgaa["foo"] == 1);
     mydgaa["lulz"] -= 1;
     assert(mydgaa["lulz"] == 0);
+
+    DefaultAA!(bool, int, false) myboolaa;
+    assert(myboolaa[3] == false);
 }
