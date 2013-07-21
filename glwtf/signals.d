@@ -5,897 +5,1372 @@
  * Essentially, when a Signal is emitted, a list of connected Observers
  * (called slots) are called.
  *
- * There have been several D implementations of Signals and Slots.
- * This version makes use of several new features in D, which make
- * using it simpler and less error prone. In particular, it is no
- * longer necessary to instrument the slots.
- *
- * References:
- *      $(LINK2 http://scottcollins.net/articles/a-deeper-look-at-_signals-and-slots.html, A Deeper Look at Signals and Slots)$(BR)
- *      $(LINK2 http://en.wikipedia.org/wiki/Observer_pattern, Observer pattern)$(BR)
- *      $(LINK2 http://en.wikipedia.org/wiki/Signals_and_slots, Wikipedia)$(BR)
- *      $(LINK2 http://boost.org/doc/html/$(SIGNALS).html, Boost Signals)$(BR)
- *      $(LINK2 http://doc.trolltech.com/4.1/signalsandslots.html, Qt)$(BR)
- *
- *      There has been a great deal of discussion in the D newsgroups
- *      over this, and several implementations:
- *
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/announce/signal_slots_library_4825.html, signal slots library)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/Signals_and_Slots_in_D_42387.html, Signals and Slots in D)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/Dynamic_binding_--_Qt_s_Signals_and_Slots_vs_Objective-C_42260.html, Dynamic binding -- Qt's Signals and Slots vs Objective-C)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/Dissecting_the_SS_42377.html, Dissecting the SS)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/dwt/about_harmonia_454.html, about harmonia)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/announce/1502.html, Another event handling module)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/41825.html, Suggestion: signal/slot mechanism)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/13251.html, Signals and slots?)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/10714.html, Signals and slots ready for evaluation)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/digitalmars/D/1393.html, Signals &amp; Slots for Walter)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/28456.html, Signal/Slot mechanism?)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/19470.html, Modern Features?)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/16592.html, Delegates vs interfaces)$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/16583.html, The importance of component programming (properties, signals and slots, etc))$(BR)
- *      $(LINK2 http://www.digitalmars.com/d/archives/16368.html, signals and slots)$(BR)
- *
- * Bugs:
- *      Not safe for multiple threads operating on the same signals
- *      or slots.
- *
- *      Safety of handlers is not yet enforced
- * Macros:
- *      WIKI = Phobos/StdSignals
- *      SIGNALS=signals
- *
- * Copyright: Copyright Digital Mars 2000 - 2013.
+ * Copyright: Copyright Robert Klotzner 2012 - 2013.
  * License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
- * Authors:   $(WEB digitalmars.com, Walter Bright),
- *            Johannes Pfau, Andrej Mitrovic
+ * Authors:   Robert Klotzner
  */
-/*          Copyright Digital Mars 2000 - 2013.
+/*          Copyright Robert Klotzner 2012 - 2013.
  * Distributed under the Boost Software License, Version 1.0.
  *    (See accompanying file LICENSE_1_0.txt or copy at
  *          http://www.boost.org/LICENSE_1_0.txt)
+ *
+ * Based on the original implementation written by Walter Bright. (std.signals)
+ * I shamelessly stole some ideas of: http://forum.dlang.org/thread/jjote0$1cql$1@digitalmars.com
+ * written by Alex Rønne Petersen.
  */
-
-// https://github.com/AndrejMitrovic/new_signals
-
 module glwtf.signals;
 
-import std.algorithm;
-import std.container;
-import std.functional;
-import std.range;
-import std.traits;
-import std.exception;
-import std.stdio;
-import std.typetuple;
+import core.atomic;
+import core.memory;
+
+
+// Hook into the GC to get informed about object deletions.
+private alias void delegate(Object) DisposeEvt;
+private extern (C) void  rt_attachDisposeEvent( Object obj, DisposeEvt evt );
+private extern (C) void  rt_detachDisposeEvent( Object obj, DisposeEvt evt );
+//debug=signal;
+// http://d.puremagic.com/issues/show_bug.cgi?id=10645
+version=bug10645;
+
 
 /**
- * This Signal struct is an implementation of the Observer pattern.
+ * string mixin for creating a signal.
  *
- * All D callable types (functions, delegates, structs with opCall,
- * classes with opCall) can be registered with a signal. When the signal
- * occurs all assigned callables are called.
+ * It creates a Signal instance named "_name", where name is given
+ * as first parameter with given protection and an accessor method
+ * with the current context protection named "name" returning either a
+ * ref RestrictedSignal or ref Signal depending on the given
+ * protection.
  *
- * Structs with opCall are only supported if they're passed by pointer. These
- * structs are then expected to be allocated on the heap.
+ * Bugs:
+ *     This mixin generator does not work with templated types right now because of:
+ *     $(LINK2 http://d.puremagic.com/issues/show_bug.cgi?id=10502, 10502)$(BR)
+ *     You might wanna use the Signal struct directly in this
+ *     case. Ideally you write the code, the mixin would generate, manually
+ *     to ensure an easy upgrade path when the above bug gets fixed:
+ ---
+ *     ref RestrictedSignal!(SomeTemplate!int) mysig() { return _mysig;}
+ *     private Signal!(SomeTemplate!int) _mysig;
+ ---
  *
- * Delegates to struct instances or nested functions are supported. However you
- * have to make sure to disconnect these delegates from the Signal before
- * they go out of scope.
+ * Params:
+ *   name = How the signal should be named. The ref returning function
+ *   will be named like this, the actual struct instance will have an
+ *   underscore prefixed.
  *
- * The return type of the handlers must be void or bool. If the return
- * type is bool and the handler returns false the remaining handlers are
- * not called. If true is returned or the type is void the remaining
- * handlers are called.
+ *   protection = Can be any valid protection specifier like
+ *   "private", "protected", "package" or in addition "none". Default
+ *   is "private". It specifies the protection of the Signal instance,
+ *   if none is given, private is used and the ref returning function
+ *   will return a Signal instead of a RestrictedSignal. The
+ *   protection of the accessor method is specified by the surrounding
+ *   protection scope.
+ *
+ * Example:
+ ---
+ import std.stdio;
+ class MyObject
+ {
+     mixin(signal!(string, int)("valueChanged"));
+
+     int value() @property { return _value; }
+     int value(int v) @property
+     {
+        if (v != _value)
+        {
+            _value = v;
+            // call all the connected slots with the two parameters
+            _valueChanged.emit("setting new value", v);
+        }
+        return v;
+    }
+private:
+    int _value;
+}
+
+class Observer
+{   // our slot
+    void watch(string msg, int i)
+    {
+        writefln("Observed msg '%s' and value %s", msg, i);
+    }
+}
+void watch(string msg, int i)
+{
+    writefln("Globally observed msg '%s' and value %s", msg, i);
+}
+void main()
+{
+    auto a = new MyObject;
+    Observer o = new Observer;
+
+    a.value = 3;                // should not call o.watch()
+    a.valueChanged.connect!"watch"(o);        // o.watch is the slot
+    a.value = 4;                // should call o.watch()
+    a.valueChanged.disconnect!"watch"(o);     // o.watch is no longer a slot
+    a.value = 5;                // so should not call o.watch()
+    a.valueChanged.connect!"watch"(o);        // connect again
+    // Do some fancy stuff:
+    a.valueChanged.connect!Observer(o, (obj, msg, i) =>  obj.watch("Some other text I made up", i+1));
+    a.valueChanged.strongConnect(&watch);
+    a.value = 6;                // should call o.watch()
+    destroy(o);                 // destroying o should automatically disconnect it
+    a.value = 7;                // should not call o.watch()
+
+}
+---
+ * which should print:
+ * <pre>
+ * Observed msg 'setting new value' and value 4
+ * Observed msg 'setting new value' and value 6
+ * Observed msg 'Some other text I made up' and value 7
+ * Globally observed msg 'setting new value' and value 6
+ * Globally observed msg 'setting new value' and value 7
+ * </pre>
  */
-struct Signal(ParamTypes...)
+string signal(Args...)(string name, string protection="private") @safe {
+    assert(protection == "public" || protection == "private" || protection == "package" || protection == "protected" || protection == "none", "Invalid protection specified, must be either: public, private, package, protected or none");
+
+     string argList="(";
+     import std.traits : fullyQualifiedName;
+     foreach (arg; Args)
+     {
+         argList~=fullyQualifiedName!(arg)~", ";
+     }
+     if (argList.length>"(".length)
+         argList = argList[0 .. $-2];
+     argList ~= ")";
+
+     string output = (protection == "none" ? "private" : protection) ~ " Signal!" ~ argList ~ " _" ~ name ~ ";\n";
+     string rType= protection == "none" ? "Signal!" : "RestrictedSignal!";
+     output ~= "ref " ~ rType ~ argList ~ " " ~ name ~ "() { return _" ~ name ~ ";}\n";
+     return output;
+ }
+
+/**
+ * Full signal implementation.
+ *
+ * It implements the emit function for all other functionality it has
+ * this aliased to RestrictedSignal.
+ *
+ * A signal is a way to couple components together in a very loose
+ * way. The receiver does not need to know anything about the sender
+ * and the sender does not need to know anything about the
+ * receivers. The sender will just call emit when something happens,
+ * the signal takes care of notifing all interested parties. By using
+ * wrapper delegates/functions, not even the function signature of
+ * sender/receiver need to match. Another consequence of this very
+ * loose coupling is, that a connected object will be freed by the GC
+ * if all references to it are dropped, even if it is still connected
+ * to a signal, the connection will simply be dropped. If this wasn't
+ * the case you'd either end up managing connections by hand, soon
+ * asking yourself why you are using a language with a GC and then
+ * still have to handle the life time of your objects manually or you
+ * don't care which results in memory leaks. If in your application
+ * the connections made by a signal are not that loose you can use
+ * strongConnect(), in this case the GC won't free your object until
+ * it was disconnected from the signal or the signal got itself destroyed.
+ *
+ * This struct is not thread-safe.
+ *
+ * Bugs: The code probably won't compile with -profile because of bug:
+ *       $(LINK2 http://d.puremagic.com/issues/show_bug.cgi?id=10260, 10260)
+ */
+struct Signal(Args...)
+{
+    alias restricted this;
+
+    /**
+     * Emit the signal.
+     *
+     * All connected slots which are still alive will be called.  If
+     * any of the slots throws an exception, the other slots will
+     * still be called. You'll receive a chained exception with all
+     * exceptions that were thrown. Thus slots won't influence each
+     * others execution.
+     *
+     * The slots are called in the same sequence as they were registered.
+     *
+     * emit also takes care of actually removing dead connections. For
+     * concurrency reasons they are set just to an invalid state by the GC.
+     *
+     * If you remove a slot during emit() it won't be called in the
+     * current run if it wasn't already.
+     *
+     * If you add a slot during emit() it will be called in the
+     * current emit() run. Note however Signal is not thread-safe, "called
+     * during emit" basically means called from within a slot.
+     */
+    void emit( Args args ) @trusted
+    {
+        restricted_._impl.emit(args);
+    }
+
+    /**
+     * Get access to the rest of the signals functionality.
+     */
+    ref RestrictedSignal!(Args) restricted() @property @trusted
+    {
+        return restricted_;
+    }
+
+    private:
+    RestrictedSignal!(Args) restricted_;
+}
+
+/**
+ * The signal implementation, not providing an emit method.
+ *
+ * The idea is to instantiate a Signal privately and provide a
+ * public accessor method for accessing the contained
+ * RestrictedSignal. You can use the signal string mixin, which does
+ * exactly that.
+ */
+struct RestrictedSignal(Args...)
 {
     /**
-     * Set to false to disable signal emission
-     */
-    bool enabled = true;
-
-    /**
-     * Check whether a handler is already connected
-     */
-    bool isConnected(T)(T handler)
-        if (isHandler!(T, ParamTypes))
+      * Direct connection to an object.
+      *
+      * Use this method if you want to connect directly to an objects
+      * method matching the signature of this signal.  The connection
+      * will have weak reference semantics, meaning if you drop all
+      * references to the object the garbage collector will collect it
+      * and this connection will be removed.
+      *
+      * Preconditions: obj must not be null. mixin("&obj."~method)
+      * must be valid and compatible.
+      * Params:
+      *     obj = Some object of a class implementing a method
+      *     compatible with this signal.
+      */
+    void connect(string method, ClassType)(ClassType obj) @trusted
+        if (is(ClassType == class) && __traits(compiles, {void delegate(Args) dg = mixin("&obj."~method);}))
+    in
     {
-        Callable call = getCallable(handler);
-        return !find(handlers[], call).empty;
+        assert(obj);
+    }
+    body
+    {
+        _impl.addSlot(obj, cast(void delegate())mixin("&obj."~method));
+    }
+    /**
+      * Indirect connection to an object.
+      *
+      * Use this overload if you want to connect to an object's method
+      * which does not match the signal's signature.  You can provide
+      * any delegate to do the parameter adaption, but make sure your
+      * delegates' context does not contain a reference to the target
+      * object, instead use the provided obj parameter, where the
+      * object passed to connect will be passed to your delegate.
+      * This is to make weak ref semantics possible, if your delegate
+      * contains a ref to obj, the object won't be freed as long as
+      * the connection remains.
+      *
+      * Preconditions: obj and dg must not be null (dg's context
+      * may). dg's context must not be equal to obj.
+      *
+      * Params:
+      *     obj = The object to connect to. It will be passed to the
+      *     delegate when the signal is emitted.
+      *
+      *     dg = A wrapper delegate which takes care of calling some
+      *     method of obj. It can do any kind of parameter adjustments
+      *     necessary.
+     */
+    void connect(ClassType)(ClassType obj, void delegate(ClassType obj, Args) dg) @trusted
+        if (is(ClassType == class))
+    in
+    {
+        assert(obj);
+        assert(dg);
+        assert(cast(void*)obj !is dg.ptr);
+    }
+    body
+    {
+        _impl.addSlot(obj, cast(void delegate()) dg);
     }
 
     /**
-     * Add a handler to the list of handlers to be called when emit() is called.
-     * The handler is added at the end of the list.
-     */
-    T connect(T)(T handler)
-        if (isHandler!(T, ParamTypes))
+      * Connect with strong ref semantics.
+      *
+      * Use this overload if you either really, really want strong ref
+      * semantics for some reason or because you want to connect some
+      * non-class method delegate. Whatever the delegates' context
+      * references, will stay in memory as long as the signals
+      * connection is not removed and the signal gets not destroyed
+      * itself.
+      *
+      * Preconditions: dg must not be null. (Its context may.)
+      *
+      * Params:
+      *     dg = The delegate to be connected.
+      */
+    void strongConnect(void delegate(Args) dg) @trusted
+    in
     {
-        Callable call = getCallable(handler);
-        assert(find(handlers[], call).empty, "Handler is already registered!");
-        handlers.stableInsertAfter(handlers[], call);
-        return handler;
+        assert(dg);
+    }
+    body
+    {
+        _impl.addSlot(null, cast(void delegate()) dg);
+    }
+
+
+    /**
+      * Disconnect a direct connection.
+      *
+      * After issuing this call, methods of obj won't be triggered any
+      * longer when emit is called.
+      * Preconditions: Same as for direct connect.
+      */
+    void disconnect(string method, ClassType)(ClassType obj) @trusted
+        if (is(ClassType == class) && __traits(compiles, {void delegate(Args) dg = mixin("&obj."~method);}))
+    in
+    {
+        assert(obj);
+    }
+    body
+    {
+        void delegate(Args) dg = mixin("&obj."~method);
+        _impl.removeSlot(obj, cast(void delegate()) dg);
     }
 
     /**
-     * Add a handler to the list of handlers to be called when emit() is called.
-     * Add this handler at the top of the list, so it will be called before all
-     * other handlers.
+      * Disconnect an indirect connection.
+      *
+      * For this to work properly, dg has to be exactly the same as
+      * the one passed to connect. So if you used a lamda you have to
+      * keep a reference to it somewhere if you want to disconnect
+      * the connection later on.  If you want to remove all
+      * connections to a particular object use the overload which only
+      * takes an object paramter.
      */
-    T connectFirst(T)(T handler)
-        if (isHandler!(T, ParamTypes))
+    void disconnect(ClassType)(ClassType obj, void delegate(ClassType, T1) dg) @trusted
+        if (is(ClassType == class))
+    in
     {
-        Callable call = getCallable(handler);
-        assert(find(handlers[], call).empty, "Handler is already registered!");
-        handlers.stableInsertFront(call);
-        return handler;
+        assert(obj);
+        assert(dg);
+    }
+    body
+    {
+        _impl.removeSlot(obj, cast(void delegate())dg);
     }
 
     /**
-     * Add a handler to be called after another handler.
-     * Params:
-     *     afterThis = The new attached handler will be called after this handler
-     *     handler = The handler to be attached
+      * Disconnect all connections to obj.
+      *
+      * All connections to obj made with calls to connect are removed.
      */
-    T connectAfter(T, U)(T afterThis, U handler)
-       if (isHandler!(T, ParamTypes) && isHandler!(U, ParamTypes))
+    void disconnect(ClassType)(ClassType obj) @trusted if (is(ClassType == class))
+    in
     {
-        Callable after = getCallable(afterThis);
-        Callable call = getCallable(handler);
-        auto location = find(handlers[], after);
+        assert(obj);
+    }
+    body
+    {
+        _impl.removeSlot(obj);
+    }
 
-        if (location.empty)  // afterThis not found
+    /**
+      * Disconnect a connection made with strongConnect.
+      *
+      * Disconnects all connections to dg.
+      */
+    void strongDisconnect(void delegate(Args) dg) @trusted
+    in
+    {
+        assert(dg);
+    }
+    body
+    {
+        _impl.removeSlot(null, cast(void delegate()) dg);
+    }
+    private:
+    SignalImpl _impl;
+}
+
+private struct SignalImpl
+{
+    /**
+      * Forbid copying.
+      * Unlike the old implementations, it now is theoretically
+      * possible to copy a signal. Even different semantics are
+      * possible. But none of the possible semantics are what the user
+      * intended in all cases, so I believe it is still the safer
+      * choice to simply disallow copying.
+      */
+    @disable this(this);
+    /// Forbit copying
+    @disable void opAssign(SignalImpl other);
+
+    void emit(Args...)( Args args )
+    {
+        int emptyCount = 0;
+        if (!_slots.emitInProgress)
         {
-            // always connect before manager
-            return connectFirst(handler);
+            _slots.emitInProgress = true;
+            scope (exit) _slots.emitInProgress = false;
         }
         else
+            emptyCount = -1;
+        doEmit(0, emptyCount, args);
+        if (emptyCount > 0)
         {
-            assert(find(handlers[], call).empty, "Handler is already registered!");
-            handlers.stableInsertAfter(take(location, 1), call);
-            return handler;
+            _slots.slots = _slots.slots[0 .. $-emptyCount];
+            _slots.slots.assumeSafeAppend();
         }
     }
 
-    /**
-     * Add a handler to be called before another handler.
-     * Params:
-     *     beforeThis = The new attached handler will be called after this handler
-     *     handler = The handler to be attached
-     */
-    T connectBefore(T, U)(T beforeThis, U handler)
-        if (isHandler!(T, ParamTypes) && isHandler!(U, ParamTypes))
+    void addSlot(Object obj, void delegate() dg)
     {
-        Callable before = getCallable(beforeThis);
-        Callable call = getCallable(handler);
-        auto location = find(handlers[], before);
-        if (location.empty)
+        auto oldSlots = _slots.slots;
+        if (oldSlots.capacity <= oldSlots.length)
         {
-             throw new Exception("Handler 'beforeThis' is not registered!");
+            auto buf = new SlotImpl[oldSlots.length+1]; // TODO: This growing strategy might be inefficient.
+            foreach (i, ref slot ; oldSlots)
+                buf[i].moveFrom(slot);
+            oldSlots = buf;
         }
-        assert(find(handlers[], call).empty, "Handler is already registered!");
-
-        //not exactly fast
-        size_t length = walkLength(handlers[]);
-        size_t pos = walkLength(location);
-        size_t new_location = length - pos;
-        location = handlers[];
-        if (new_location == 0)
-            handlers.stableInsertFront(call);
         else
-            handlers.stableInsertAfter(take(location, new_location), call);
-        return handler;
+            oldSlots.length = oldSlots.length + 1;
+
+        oldSlots[$-1].construct(obj, dg);
+        _slots.slots = oldSlots;
+    }
+    void removeSlot(Object obj, void delegate() dg)
+    {
+        removeSlot((const ref SlotImpl item) => item.wasConstructedFrom(obj, dg));
+    }
+    void removeSlot(Object obj)
+    {
+        removeSlot((const ref SlotImpl item) => item.obj is obj);
     }
 
-    /**
-     * Remove a handler from the list of handlers to be called when emit() is called.
-     */
-    T disconnect(T)(T handler)
-        if (isHandler!(T, ParamTypes))
+    ~this()
     {
-        Callable call = getCallable(handler);
-        auto pos = find(handlers[], call);
-        if (pos.empty)
+        foreach (ref slot; _slots.slots)
         {
-            throw new Exception("Handler is not connected");
+            debug (signal) { import std.stdio; stderr.writefln("Destruction, removing some slot(%s, weakref: %s), signal: ", &slot, &slot._obj, &this); }
+            slot.reset(); // This is needed because ATM the GC won't trigger struct
+                        // destructors to be run when within a GC managed array.
         }
-        handlers.stableLinearRemove(take(pos, 1));
-        return handler;
     }
+/// Little helper functions:
 
     /**
-     * Remove all handlers from the signal
+     * Find and make invalid any slot for which isRemoved returns true.
      */
-    void clear()
+    void removeSlot(bool delegate(const ref SlotImpl) isRemoved)
     {
-        handlers.clear();
+        if(_slots.emitInProgress)
+        {
+            foreach (ref slot; _slots.slots)
+                if (isRemoved(slot))
+                    slot.reset();
+        }
+        else // It is save to do immediate cleanup:
+        {
+            int emptyCount = 0;
+            auto mslots = _slots.slots;
+            foreach (int i, ref slot; mslots)
+            // We are retrieving obj twice which is quite expensive because of GC lock:
+                if(!slot.isValid || isRemoved(slot))
+                {
+                    emptyCount++;
+                    slot.reset();
+                }
+                else if(emptyCount)
+                    mslots[i-emptyCount].moveFrom(slot);
+
+            if (emptyCount > 0)
+            {
+                mslots = mslots[0..$-emptyCount];
+                mslots.assumeSafeAppend();
+                _slots.slots = mslots;
+            }
+        }
     }
 
     /**
-     * Calculate the number of registered handlers
+     * Helper method to allow all slots being called even in case of an exception.
+     * All exceptions that occur will be chained.
+     * Any invalid slots (GC collected or removed) will be dropped.
      */
-    size_t calculateLength()
+    void doEmit(Args...)(int offset, ref int emptyCount, Args args )
     {
-        return walkLength(handlers[]);
+        int i=offset;
+        auto myslots = _slots.slots;
+        scope (exit) if (i+1<myslots.length) doEmit(i+1, emptyCount, args); // Carry on.
+        if (emptyCount == -1)
+            for (; i<myslots.length; i++)
+            {
+                myslots[i](args);
+                myslots = _slots.slots; // Refresh because addSlot might have been called.
+            }
+        else
+            for (; i<myslots.length; i++)
+            {
+                bool result = myslots[i](args);
+                myslots = _slots.slots; // Refresh because addSlot might have been called.
+                if (!result)
+                    emptyCount++;
+                else if (emptyCount>0)
+                {
+                    myslots[i-emptyCount].reset();
+                    myslots[i-emptyCount].moveFrom(myslots[i]);
+                }
+            }
+    }
+
+    SlotArray _slots;
+}
+
+
+// Simple convenience struct for signal implementation.
+// Its is inherently unsafe. It is not a template so SignalImpl does
+// not need to be one.
+private struct SlotImpl
+{
+    @disable this(this);
+    @disable void opAssign(SlotImpl other);
+
+    /// Pass null for o if you have a strong ref delegate.
+    /// dg.funcptr must not point to heap memory.
+    void construct(Object o, void delegate() dg)
+    in { assert(this is SlotImpl.init); }
+    body
+    {
+        _obj.construct(o);
+        _dataPtr = dg.ptr;
+        _funcPtr = dg.funcptr;
+        assert(GC.addrOf(_funcPtr) is null, "Your function is implemented on the heap? Such dirty tricks are not supported with std.signal!");
+        if (o)
+        {
+            if (_dataPtr is cast(void*) o)
+                _dataPtr = directPtrFlag;
+            hasObject = true;
+        }
     }
 
     /**
-        All the handler types that can be connected to this signal instance.
-        The ones which return a boolean can stop the signal propagation.
-    */
-    private alias FuncVoid  = void function(ParamTypes);
-    private alias FuncBool  = bool function(ParamTypes);
-    private alias DelegVoid = void delegate(ParamTypes);
-    private alias DelegBool = bool delegate(ParamTypes);
+     * Check whether this slot was constructed from object o and delegate dg.
+     */
+    bool wasConstructedFrom(Object o, void delegate() dg) const
+    {
+        if ( o && dg.ptr is cast(void*) o)
+            return obj is o && _dataPtr is directPtrFlag && funcPtr is dg.funcptr;
+        else
+            return obj is o && _dataPtr is dg.ptr && funcPtr is dg.funcptr;
+    }
+    /**
+     * Implement proper explict move.
+     */
+    void moveFrom(ref SlotImpl other)
+    in { assert(this is SlotImpl.init); }
+    body
+    {
+        auto o = other.obj;
+        _obj.construct(o);
+        _dataPtr = other._dataPtr;
+        _funcPtr = other._funcPtr;
+        other.reset(); // Destroy original!
+
+    }
+    @property Object obj() const
+    {
+        return _obj.obj;
+    }
 
     /**
-        Emit the signal to all connected callbacks.
-        It returns true only if all handlers returned true,
-        it will return false if the signal is either not
-        enabled, or if one of boolean return callbacks
-        has returned false to stop the signal from propagating.
-    */
-    bool emit(ParamTypes params)
+     * Whether or not _obj should contain a valid object. (We have a weak connection)
+     */
+    bool hasObject() @property const
     {
-        if (!enabled)
+        return cast(ptrdiff_t) _funcPtr & 1;
+    }
+
+    /**
+     * Check whether this is a valid slot.
+     *
+     * Meaning opCall will call something and return true;
+     */
+    bool isValid() @property const
+    {
+        return funcPtr && (!hasObject || obj !is null);
+    }
+    /**
+     * Call the slot.
+     *
+     * Returns: True if the call was successful (the slot was valid).
+     */
+    bool opCall(Args...)(Args args)
+    {
+        auto o = obj;
+        void* o_addr = cast(void*)(o);
+
+        if (!funcPtr || (hasObject && !o_addr))
             return false;
-
-        foreach(callable; handlers[])
+        if (_dataPtr is directPtrFlag || !hasObject)
         {
-            if (callable.deleg !is null)
-            {
-                if (callable.returnsBool)
-                {
-                    DelegBool del = cast(DelegBool)callable.deleg;
-                    if(!del(params))
-                        return false;
-                }
-                else
-                {
-                    DelegVoid del = cast(DelegVoid)callable.deleg;
-                    del(params);
-                }
-            }
+            void delegate(Args) mdg;
+            mdg.funcptr=cast(void function(Args)) funcPtr;
+            debug (signal) { import std.stdio; writefln("hasObject: %s, o_addr: %s, dataPtr: %s", hasObject, o_addr, _dataPtr);}
+            assert((hasObject && _dataPtr is directPtrFlag) || (!hasObject && _dataPtr !is directPtrFlag));
+            if (hasObject)
+                mdg.ptr = o_addr;
             else
-            if (callable.func !is null)
-            {
-                if (callable.returnsBool)
-                {
-                    FuncBool fun = cast(FuncBool)callable.func;
-                    if(!fun(params))
-                        return false;
-                }
-                else
-                {
-                    FuncVoid fun = cast(FuncVoid)callable.func;
-                    fun(params);
-                }
-            }
-            else
-                enforce(0, "Error: missing signal handler.");
+                mdg.ptr = _dataPtr;
+            mdg(args);
         }
-
+        else
+        {
+            void delegate(Object, Args) mdg;
+            mdg.ptr = _dataPtr;
+            mdg.funcptr = cast(void function(Object, Args)) funcPtr;
+            mdg(o, args);
+        }
         return true;
     }
-
-    private static struct Callable
-    {
-        this(T)(T del)
-            if (isHandler!(T, ParamTypes))
-        {
-            this.returnsBool = is(ReturnType!T == bool);
-
-            static if (is(T == class))
-            {
-                this.deleg = cast(DelegBool)&del.opCall;
-            }
-            else
-            static if (isPointer!T && is(pointerTarget!T == struct))
-            {
-                this.deleg = cast(DelegBool)&del.opCall;
-            }
-            else
-            static if (isDelegate!T)
-            {
-                this.deleg = cast(DelegBool)del;
-            }
-            else
-            static if (isFunctionPointer!T)
-            {
-                this.func = cast(FuncBool)del;
-            }
-            else
-            static assert(0);
-        }
-
-        DelegBool deleg;
-        FuncBool func;
-        bool returnsBool;
-    }
-
-    /*
-     * Get a Callable for the handler.
-     * Handler can be a void function, void delegate, bool
-     * function, bool delegate, class with opCall or a pointer to
-     * a struct with opCall.
+    /**
+     * Reset this instance to its intial value.
      */
-    private Callable getCallable(T)(T handler)
-        if (isHandler!(T, ParamTypes))
-    {
-        return Callable(handler);
+    void reset() {
+        _funcPtr = SlotImpl.init._funcPtr;
+        _dataPtr = SlotImpl.init._dataPtr;
+        _obj.reset();
     }
-
-    private SList!Callable handlers;
-}
-
-///
-unittest
-{
-    Signal!int sig;
-
-    static bool stop(int x) { assert(x == 1); return false; }
-    static void crash(int x) { assert(0); }
-
-    sig.connect(&stop);
-    sig.connect(&crash);
-    sig.emit(1);
-}
-
-//unit tests
-unittest
-{
-    int val;
-    string text;
-    @safe void handler(int i, string t)
+private:
+    void* funcPtr() @property const
     {
-        val = i;
-        text = t;
+        return cast(void*)( cast(ptrdiff_t)_funcPtr & ~cast(ptrdiff_t)1);
     }
-    @safe static void handler2(int i, string t)
+    void hasObject(bool yes) @property
     {
+        if (yes)
+            _funcPtr = cast(void*)(cast(ptrdiff_t) _funcPtr | 1);
+        else
+            _funcPtr = cast(void*)(cast(ptrdiff_t) _funcPtr & ~cast(ptrdiff_t)1);
     }
+    void* _funcPtr;
+    void* _dataPtr;
+    WeakRef _obj;
 
-    Signal!(int, string) onTest;
-    onTest.connect(&handler);
-    onTest.connect(&handler2);
-    onTest.emit(1, "test");
-    assert(val == 1);
-    assert(text == "test");
-    onTest.emit(99, "te");
-    assert(val == 99);
-    assert(text == "te");
+
+    enum directPtrFlag = cast(void*)(~0);
 }
 
-unittest
-{
-    @safe void handler() {}
-    Signal!() onTest;
-    onTest.connect(&handler);
-    bool thrown = false;
-    try
-        onTest.connect(&handler);
-    catch(Throwable)
-        thrown = true;
 
-    assert(thrown);
-}
-
-unittest
+// Provides a way of holding a reference to an object, without the GC seeing it.
+private struct WeakRef
 {
-    @safe void handler() { }
-    Signal!() onTest;
-    onTest.connect(&handler);
-    onTest.disconnect(&handler);
-    onTest.connect(&handler);
-    onTest.emit();
-}
+    /**
+     * As struct must be relocatable, it is not even possible to
+     * provide proper copy support for WeakRef.  rt_attachDisposeEvent
+     * is used for registering unhook. D's move semantics assume
+     * relocatable objects, which results in this(this) being called
+     * for one instance and the destructor for another, thus the wrong
+     * handlers are deregistered.  D's assumption of relocatable
+     * objects is not matched, so move() for example will still simply
+     * swap contents of two structs, resulting in the wrong unhook
+     * delegates being unregistered.
 
-unittest
-{
-    bool called = false;
-    @safe void handler() { called = true; }
-    Signal!() onTest;
-    onTest.connect(&handler);
-    onTest.disconnect(&handler);
-    onTest.connect(&handler);
-    onTest.emit();
-    assert(called);
-}
-
-unittest
-{
-    class handler
+     * Unfortunately the runtime still blindly copies WeakRefs if they
+     * are in a dynamic array and reallocation is needed. This case
+     * has to be handled separately.
+     */
+    @disable this(this);
+    @disable void opAssign(WeakRef other);
+    void construct(Object o)
+    in { assert(this is WeakRef.init); }
+    body
     {
-        @safe void opCall(int i) {}
+        debug (signal) createdThis=&this;
+        debug (signal) { import std.stdio; writefln("WeakRef.construct for %s and object: %s", &this, o); }
+        if (!o)
+            return;
+        _obj = InvisibleAddress.construct(cast(void*)o);
+        rt_attachDisposeEvent(o, &unhook);
     }
-
-    struct handler2
+    Object obj() @property const
     {
-        @safe void opCall(int i) {}
-    }
-    Signal!(int) onTest;
-    onTest.connect(new handler);
-    auto h = onTest.connect(new handler2);
-    onTest.emit(0);
-    onTest.disconnect(h);
-}
-
-unittest
-{
-    __gshared bool called = false;
-
-    struct A
-    {
-        string payload;
-
-        @trusted void opCall(float f, string s)
+        void* o = null;
+        // Two iterations are necessary, because after the atomic load
+        // we still have an invisible address, thus the GC can reset
+        // _obj after we already retrieved the data. Also the call to
+        // GC.addrOf needs to be done twice, otherwise still segfaults
+        // still happen. With two iterations I wasn't able to trigger
+        // any segfault with test/testheisenbug.d. The assertion in
+        // Observer.watch never triggered anyways with this
+        // implementation.
+        foreach ( i ; 0..2)
         {
-            assert(payload == "payload");
-            assert(f == 0.1234f);
-            assert(s == "test call");
-            called = true;
+            auto tmp =  atomicLoad(_obj); // Does not work with constructor
+            debug (signal) { import std.stdio; writefln("Loaded %s, should be: %s", tmp, cast(InvisibleAddress)_obj); }
+            o = tmp.address;
+            if ( o is null)
+                return null; // Nothing to do then.
+            o = GC.addrOf(tmp.address);
         }
-    }
-
-    A* a = new A();
-    a.payload = "payload";
-
-    Signal!(float, string) onTest;
-    onTest.connect(a);
-    onTest.emit(0.1234f, "test call");
-    assert(called);
-}
-
-unittest
-{
-    __gshared bool called;
-    struct A
-    {
-        string payload;
-        @trusted void opCall(float f, string s)
+        if (o)
         {
-            assert(payload == "payload 2");
-            called = true;
+            assert(GC.addrOf(o), "Not possible!");
+            return cast(Object)o;
         }
+        return null;
+    }
+    /**
+     * Reset this instance to its intial value.
+     */
+    void reset() {
+        auto o = obj;
+        debug (signal) { import std.stdio; writefln("WeakRef.reset for %s and object: %s", &this, o); }
+        if (o)
+        {
+            rt_detachDisposeEvent(o, &unhook);
+            unhook(o);
+        }
+        debug (signal) createdThis = null;
     }
 
-    A* a = new A();
-    a.payload = "payload";
-
-    Signal!(float, string) onTest;
-    onTest.connect(a);
-    A* b = new A();
-    b.payload = "payload 2";
-    onTest.connect(b);
-    onTest.disconnect(a);
-    onTest.emit(0.1234f, "test call");
-    assert(called);
-}
-
-unittest
-{
-    struct A
+    ~this()
     {
-        @safe void opCall() {}
+        reset();
     }
-    A* a = new A();
-
-    Signal!() onTest;
-    onTest.connect(a);
-    bool thrown = false;
-    try
-        onTest.connect(a);
-    catch(Throwable)
-        thrown = true;
-
-    assert(thrown);
-}
-
-unittest
-{
-    struct A
+    private:
+    debug (signal)
     {
-        @safe void opCall() {}
-    }
-    A* a = new A();
-
-    Signal!() onTest;
-    onTest.connect(a);
-    onTest.disconnect(a);
-    bool thrown = false;
-    try
-        onTest.disconnect(a);
-    catch(Throwable)
-        thrown = true;
-
-    assert(thrown);
-}
-
-unittest
-{
-    struct A
+    invariant()
     {
-        @safe void opCall() {}
+        import std.conv : text;
+        assert(createdThis is null || &this is createdThis, text("We changed address! This should really not happen! Orig address: ", cast(void*)createdThis, " new address: ", cast(void*)&this));
     }
-    A* a = new A();
-
-    Signal!() onTest;
-    bool thrown = false;
-    try
-        onTest.disconnect(a);
-    catch(Throwable)
-        thrown = true;
-
-    assert(thrown);
-}
-
-unittest
-{
-    bool secondCalled = false;
-    @safe bool first(int i) {return false;}
-    @safe void second(int i) {secondCalled = true;}
-    Signal!(int) onTest;
-    onTest.connect(&first);
-    onTest.connect(&second);
-    onTest.emit(0);
-    assert(!secondCalled);
-    onTest.disconnect(&first);
-    onTest.connect(&first);
-    onTest.emit(0);
-    assert(secondCalled);
-}
-
-unittest
-{
-    @safe void second(int i) {}
-    Signal!(int) onTest;
-    auto t1 = onTest.getCallable(&second);
-    auto t2 = onTest.getCallable(&second);
-    auto t3 = onTest.getCallable(&second);
-    assert(t1 == t2);
-    assert(t2 == t3);
-}
-
-unittest
-{
-    bool called = false;
-    @safe void handler() { called = true; }
-    Signal!() onTest;
-    onTest.connect(&handler);
-    onTest.emit();
-    assert(called);
-    called = false;
-    onTest.enabled = false;
-    onTest.emit();
-    assert(!called);
-    onTest.enabled = true;
-    onTest.emit();
-    assert(called);
-}
-
-unittest
-{
-    @safe void handler() {}
-    Signal!() onTest;
-    assert(!onTest.isConnected(&handler));
-    onTest.connect(&handler);
-    assert(onTest.isConnected(&handler));
-    onTest.emit();
-    assert(onTest.isConnected(&handler));
-    onTest.disconnect(&handler);
-    assert(!onTest.isConnected(&handler));
-    onTest.emit();
-    assert(!onTest.isConnected(&handler));
-}
-
-unittest
-{
-    bool firstCalled, secondCalled, thirdCalled;
-    @safe void handler1() {firstCalled = true;}
-    @safe void handler2()
+    WeakRef* createdThis;
+    }
+    void unhook(Object o)
     {
-        secondCalled = true;
-        assert(firstCalled);
-        assert(thirdCalled);
+        version (all)
+            atomicStore(_obj, InvisibleAddress.construct(null));
+        else
+            _obj = InvisibleAddress(null);
     }
-    @safe void handler3()
+    shared(InvisibleAddress) _obj;
+}
+
+version(D_LP64)
+{
+    struct InvisibleAddress
     {
-        thirdCalled = true;
-        assert(firstCalled);
-        assert(!secondCalled);
+        version(bug10645)
+        {
+            static InvisibleAddress construct(void* o)
+            {
+                return InvisibleAddress(~cast(ptrdiff_t)o);
+            }
+        }
+        else
+        {
+            this(void* o)
+            {
+                _addr = ~cast(ptrdiff_t)(o);
+                debug (signal) debug (3) { import std.stdio; writeln("Constructor _addr: ", _addr);}
+                debug (signal) debug (3) { import std.stdio; writeln("Constructor ~_addr: ", ~_addr);}
+            }
+        }
+        void* address() @property const
+        {
+            debug (signal) debug (3) { import std.stdio; writeln("_addr: ", _addr);}
+            debug (signal) debug (3) { import std.stdio; writeln("~_addr: ", ~_addr);}
+            return cast(void*) ~ _addr;
+        }
+        debug(signal)        string toString()
+        {
+            import std.conv : text;
+            return text(address);
+        }
+    private:
+        ptrdiff_t _addr = ~ cast(ptrdiff_t) 0;
     }
-    Signal!() onTest;
-    onTest.connect(&handler1);
-    onTest.connect(&handler2);
-    auto h = onTest.connectAfter(&handler1, &handler3);
-    assert(h == &handler3);
-    onTest.emit();
-    assert(firstCalled && secondCalled && thirdCalled);
 }
-
-unittest
+else
 {
-    bool firstCalled, secondCalled;
-    @safe void handler1() {firstCalled = true;}
-    @safe void handler2()
+    struct InvisibleAddress
     {
-        secondCalled = true;
-        assert(firstCalled);
+        version(bug10645)
+        {
+            static InvisibleAddress construct(void* o)
+            {
+                auto tmp = cast(ptrdiff_t) cast(void*) o;
+                auto addrHigh = (tmp>>16)&0x0000ffff | 0xffff0000; // Address relies in kernel space
+                auto addrLow = tmp&0x0000ffff | 0xffff0000;
+                return InvisibleAddress(addrHigh, addrLow);
+            }
+        }
+        else
+        {
+            this(void* o)
+            {
+                auto tmp = cast(ptrdiff_t) cast(void*) o;
+                _addrHigh = (tmp>>16)&0x0000ffff | 0xffff0000; // Address relies in kernel space
+                _addrLow = tmp&0x0000ffff | 0xffff0000;
+            }
+        }
+        void* address() @property const
+        {
+            return cast(void*) (_addrHigh<<16 | (_addrLow & 0x0000ffff));
+        }
+        debug(signal)        string toString()
+        {
+            import std.conv : text;
+            return text(address);
+        }
+    private:
+        ptrdiff_t _addrHigh = 0xffff0000;
+        ptrdiff_t _addrLow = 0xffff0000;
     }
-    Signal!() onTest;
-    onTest.connect(&handler2);
-    onTest.connectFirst(&handler1);
-    onTest.emit();
-    assert(firstCalled && secondCalled);
-}
-
-unittest
-{
-    bool firstCalled, secondCalled, thirdCalled;
-    @safe void handler1() {firstCalled = true;}
-    @safe void handler2()
-    {
-        secondCalled = true;
-        assert(firstCalled);
-        assert(!thirdCalled);
-    }
-    @safe void handler3()
-    {
-        thirdCalled = true;
-        assert(firstCalled);
-        assert(secondCalled);
-    }
-    Signal!() onTest;
-    onTest.connect(&handler2);
-    auto h = onTest.connectAfter(&handler2, &handler3);
-    assert(h == &handler3);
-    auto h2 = onTest.connectBefore(&handler2, &handler1);
-    assert(h2 == &handler1);
-    onTest.emit();
-    assert(firstCalled && secondCalled && thirdCalled);
-    firstCalled = secondCalled = thirdCalled = false;
-    onTest.disconnect(h);
-    onTest.disconnect(h2);
-    onTest.disconnect(&handler2);
-    onTest.connect(&handler1);
-    onTest.connect(&handler3);
-    onTest.connectBefore(&handler3, &handler2);
-    onTest.emit();
-    assert(firstCalled && secondCalled && thirdCalled);
-}
-
-unittest
-{
-    @safe void handler() {}
-    Signal!() onTest;
-    assert(onTest.calculateLength() == 0);
-    onTest.connect(&handler);
-    assert(onTest.calculateLength() == 1);
-    onTest.clear();
-    assert(onTest.calculateLength() == 0);
-    onTest.emit();
-}
-
-/** Callbacks can only have these return types. */
-private alias CallbackReturnTypes = TypeTuple!(void, bool);
-
-/** Check whether $(D T) is a handler function which can be called with the $(D Types). */
-private template isHandler(T, Types...)
-    if (isSomeFunction!T)
-{
-    enum bool isHandler = is(typeof(T.init(Types.init))) && isOneOf!(ReturnType!T, CallbackReturnTypes);
-}
-
-/// function pointer
-unittest
-{
-    static void vc0() { }
-    static void vc1(int) { }
-    static void vc2(int, float) { }
-
-    static bool bc0() { return false; }
-    static bool bc1(int) { return false; }
-    static bool bc2(int, float) { return false; }
-
-    static assert(isHandler!(typeof(&vc0)));
-    static assert(isHandler!(typeof(&vc1), int));
-    static assert(isHandler!(typeof(&vc2), int, float));
-    static assert(isHandler!(typeof(&bc0)));
-    static assert(isHandler!(typeof(&bc1), int));
-    static assert(isHandler!(typeof(&bc2), int, float));
-
-    static assert(!isHandler!(typeof(&vc1), string));
-    static assert(!isHandler!(typeof(&vc2), string, float));
-    static assert(!isHandler!(typeof(&bc1), string));
-    static assert(!isHandler!(typeof(&bc2), string, float));
-
-    static assert(!isHandler!(typeof(&vc0), int));
-    static assert(!isHandler!(typeof(&vc1)));
-    static assert(!isHandler!(typeof(&vc2)));
-    static assert(!isHandler!(typeof(&bc0), int));
-    static assert(!isHandler!(typeof(&bc1)));
-    static assert(!isHandler!(typeof(&bc2)));
-
-    // only void and bool return types allowed
-    static string sc1(int) { return ""; }
-    static assert(!isHandler!(typeof(&sc1), int));
-}
-
-/// delegate
-unittest
-{
-    int x;
-    void vc0() { x = 1; }
-    void vc1(int) { x = 1; }
-    void vc2(int, float) { x = 1; }
-
-    bool bc0() { x = 1; return false; }
-    bool bc1(int) { x = 1; return false; }
-    bool bc2(int, float) { x = 1; return false; }
-
-    static assert(isHandler!(typeof(&vc0)));
-    static assert(isHandler!(typeof(&vc1), int));
-    static assert(isHandler!(typeof(&vc2), int, float));
-    static assert(isHandler!(typeof(&bc0)));
-    static assert(isHandler!(typeof(&bc1), int));
-    static assert(isHandler!(typeof(&bc2), int, float));
-
-    static assert(!isHandler!(typeof(&vc1), string));
-    static assert(!isHandler!(typeof(&vc2), string, float));
-    static assert(!isHandler!(typeof(&bc1), string));
-    static assert(!isHandler!(typeof(&bc2), string, float));
-
-    static assert(!isHandler!(typeof(&vc0), int));
-    static assert(!isHandler!(typeof(&vc1)));
-    static assert(!isHandler!(typeof(&vc2)));
-    static assert(!isHandler!(typeof(&bc0), int));
-    static assert(!isHandler!(typeof(&bc1)));
-    static assert(!isHandler!(typeof(&bc2)));
-
-    // only void and bool return types allowed
-    string sc1(int) { x = 1; return ""; }
-    static assert(!isHandler!(typeof(&sc1), int));
-}
-
-/** Check whether $(D T) is a pointer to a struct with an $(D opCall) function which can be called with the $(D Types). */
-private template isHandler(T, Types...)
-    if (isPointer!T && is(pointerTarget!T == struct))
-{
-    enum bool isHandler = is(typeof(pointerTarget!T.init.opCall(Types.init)))
-                          && isOneOf!(ReturnType!T, CallbackReturnTypes);
-}
-
-/// ditto
-private template isHandler(T, Types...)
-    if (is(T == struct))
-{
-    enum bool isHandler = false;
-}
-
-/// struct opCall
-unittest
-{
-    static struct VC0 { void opCall() { } }
-    static struct VC1 { void opCall(int) { } }
-    static struct VC2 { void opCall(int, float) { } }
-
-    static struct BC0 { bool opCall() { return false; } }
-    static struct BC1 { bool opCall(int) { return false; } }
-    static struct BC2 { bool opCall(int, float) { return false; } }
-
-    VC0 vc0; VC1 vc1; VC2 vc2;
-    BC0 bc0; BC1 bc1; BC2 bc2;
-
-    static assert(isHandler!(typeof(&vc0)));
-    static assert(isHandler!(typeof(&vc1), int));
-    static assert(isHandler!(typeof(&vc2), int, float));
-    static assert(isHandler!(typeof(&bc0)));
-    static assert(isHandler!(typeof(&bc1), int));
-    static assert(isHandler!(typeof(&bc2), int, float));
-
-    // only pointers to struct instances allowed for opCall
-    static assert(!isHandler!(typeof(vc0)));
-    static assert(!isHandler!(typeof(vc1), int));
-    static assert(!isHandler!(typeof(vc2), int, float));
-    static assert(!isHandler!(typeof(bc0)));
-    static assert(!isHandler!(typeof(bc1), int));
-    static assert(!isHandler!(typeof(bc2), int, float));
-
-    static assert(!isHandler!(typeof(&vc1), string));
-    static assert(!isHandler!(typeof(&vc2), string, float));
-    static assert(!isHandler!(typeof(&bc1), string));
-    static assert(!isHandler!(typeof(&bc2), string, float));
-
-    static assert(!isHandler!(typeof(&vc0), int));
-    static assert(!isHandler!(typeof(&vc1)));
-    static assert(!isHandler!(typeof(&vc2)));
-    static assert(!isHandler!(typeof(&bc0), int));
-    static assert(!isHandler!(typeof(&bc1)));
-    static assert(!isHandler!(typeof(&bc2)));
-
-    // only void and bool return types allowed
-    static struct SC1 { string opCall(int) { return ""; } }
-    SC1 sc1;
-    static assert(!isHandler!(typeof(&sc1), int));
-}
-
-/** Check whether $(D T) is a class with an $(D opCall) function which can be called with the $(D Types). */
-private template isHandler(T, Types...)
-    if (is(T == class))
-{
-    static if (is(typeof(T.init.opCall(Types.init))))
-    {
-        enum bool isHandler = isOneOf!(typeof(T.init.opCall(Types.init)), CallbackReturnTypes);
-    }
-    else
-    {
-        enum bool isHandler = false;
-    }
-}
-
-/// class opCall
-unittest
-{
-    static class VC0 { void opCall() { } }
-    static class VC1 { void opCall(int) { } }
-    static class VC2 { void opCall(int, float) { } }
-
-    static class BC0 { bool opCall() { return false; } }
-    static class BC1 { bool opCall(int) { return false; } }
-    static class BC2 { bool opCall(int, float) { return false; } }
-
-    VC0 vc0; VC1 vc1; VC2 vc2;
-    BC0 bc0; BC1 bc1; BC2 bc2;
-
-    static assert(isHandler!(typeof(vc0)));
-    static assert(isHandler!(typeof(vc1), int));
-    static assert(isHandler!(typeof(vc2), int, float));
-    static assert(isHandler!(typeof(bc0)));
-    static assert(isHandler!(typeof(bc1), int));
-    static assert(isHandler!(typeof(bc2), int, float));
-
-    static assert(!isHandler!(typeof(vc1), string));
-    static assert(!isHandler!(typeof(vc2), string, float));
-    static assert(!isHandler!(typeof(bc1), string));
-    static assert(!isHandler!(typeof(bc2), string, float));
-
-    static assert(!isHandler!(typeof(vc0), int));
-    static assert(!isHandler!(typeof(vc1)));
-    static assert(!isHandler!(typeof(vc2)));
-    static assert(!isHandler!(typeof(bc0), int));
-    static assert(!isHandler!(typeof(bc1)));
-    static assert(!isHandler!(typeof(bc2)));
-
-    // only void and bool return types allowed
-    static struct SC1 { string opCall(int) { return ""; } }
-    SC1 sc1;
-    static assert(!isHandler!(typeof(&sc1), int));
 }
 
 /**
-    Checks whether $(D Target) matches any $(D Types).
-*/
-template isOneOf(Target, Types...)
+ * Provides a way of storing flags in unused parts of a typical D array.
+ *
+ * By unused I mean the highest bits of the length (We don't need to support 4 billion slots per signal with int or 10^19 if length gets changed to 64 bits.)
+ */
+private struct SlotArray {
+    // Choose int for now, this saves 4 bytes on 64 bits.
+    alias int lengthType;
+    import std.bitmanip : bitfields;
+    enum reservedBitsCount = 3;
+    enum maxSlotCount = lengthType.max >> reservedBitsCount;
+    SlotImpl[] slots() @property
+    {
+        return _ptr[0 .. length];
+    }
+    void slots(SlotImpl[] newSlots) @property
+    {
+        _ptr = newSlots.ptr;
+        version(assert)
+        {
+            import std.conv : text;
+            assert(newSlots.length <= maxSlotCount, text("Maximum slots per signal exceeded: ", newSlots.length, "/", maxSlotCount));
+        }
+        _blength.length &= ~maxSlotCount;
+        _blength.length |= newSlots.length;
+    }
+    size_t length() @property
+    {
+        return _blength.length & maxSlotCount;
+    }
+
+    bool emitInProgress() @property
+    {
+        return _blength.emitInProgress;
+    }
+    void emitInProgress(bool val) @property
+    {
+        _blength.emitInProgress = val;
+    }
+private:
+    SlotImpl* _ptr;
+    union BitsLength {
+        mixin(bitfields!(
+                  bool, "", lengthType.sizeof*8-1,
+                  bool, "emitInProgress", 1
+                  ));
+        lengthType length;
+    }
+    BitsLength _blength;
+}
+unittest {
+    SlotArray arr;
+    auto tmp = new SlotImpl[10];
+    arr.slots = tmp;
+    assert(arr.length == 10);
+    assert(!arr.emitInProgress);
+    arr.emitInProgress = true;
+    assert(arr.emitInProgress);
+    assert(arr.length == 10);
+    assert(arr.slots is tmp);
+    arr.slots = tmp;
+    assert(arr.emitInProgress);
+    assert(arr.length == 10);
+    assert(arr.slots is tmp);
+    debug (signal){ import std.stdio;
+        writeln("Slot array tests passed!");
+    }
+}
+unittest
+{ // Check that above example really works ...
+    debug (signal) import std.stdio;
+    class MyObject
+    {
+        mixin(signal!(string, int)("valueChanged"));
+
+        int value() @property { return _value; }
+        int value(int v) @property
+        {
+            if (v != _value)
+            {
+                _value = v;
+                // call all the connected slots with the two parameters
+                _valueChanged.emit("setting new value", v);
+            }
+            return v;
+        }
+    private:
+        int _value;
+    }
+
+    class Observer
+    {   // our slot
+        void watch(string msg, int i)
+        {
+            debug (signal) writefln("Observed msg '%s' and value %s", msg, i);
+        }
+    }
+
+    void watch(string msg, int i)
+    {
+            debug (signal) writefln("Globally observed msg '%s' and value %s", msg, i);
+    }
+    auto a = new MyObject;
+    Observer o = new Observer;
+
+    a.value = 3;                // should not call o.watch()
+    a.valueChanged.connect!"watch"(o);        // o.watch is the slot
+    a.value = 4;                // should call o.watch()
+    a.valueChanged.disconnect!"watch"(o);     // o.watch is no longer a slot
+    a.value = 5;                // so should not call o.watch()
+    a.valueChanged.connect!"watch"(o);        // connect again
+    // Do some fancy stuff:
+    a.valueChanged.connect!Observer(o, (obj, msg, i) =>  obj.watch("Some other text I made up", i+1));
+    a.valueChanged.strongConnect(&watch);
+    a.value = 6;                // should call o.watch()
+    destroy(o);                 // destroying o should automatically disconnect it
+    a.value = 7;                // should not call o.watch()
+
+}
+
+unittest
 {
-    static if (Types.length > 1)
+    debug (signal) import std.stdio;
+    class Observer
     {
-        enum bool isOneOf = isOneOf!(Target, Types[0]) || isOneOf!(Target, Types[1 .. $]);
+        void watch(string msg, int i)
+        {
+            //writefln("Observed msg '%s' and value %s", msg, i);
+            captured_value = i;
+            captured_msg   = msg;
+        }
+
+
+        int    captured_value;
+        string captured_msg;
     }
-    else static if (Types.length == 1)
+
+    class SimpleObserver
     {
-        enum bool isOneOf = is(Unqual!Target == Unqual!(Types[0]));
+        void watchOnlyInt(int i) {
+            captured_value = i;
+        }
+        int captured_value;
     }
-    else
+
+    class Foo
     {
-        enum bool isOneOf = false;
+        @property int value() { return _value; }
+
+        @property int value(int v)
+        {
+            if (v != _value)
+            {   _value = v;
+                _extendedSig.emit("setting new value", v);
+                //_simpleSig.emit(v);
+            }
+            return v;
+        }
+
+        mixin(signal!(string, int)("extendedSig"));
+        //Signal!(int) simpleSig;
+
+        private:
+        int _value;
+    }
+
+    Foo a = new Foo;
+    Observer o = new Observer;
+    SimpleObserver so = new SimpleObserver;
+    // check initial condition
+    assert(o.captured_value == 0);
+    assert(o.captured_msg == "");
+
+    // set a value while no observation is in place
+    a.value = 3;
+    assert(o.captured_value == 0);
+    assert(o.captured_msg == "");
+
+    // connect the watcher and trigger it
+    a.extendedSig.connect!"watch"(o);
+    a.value = 4;
+    assert(o.captured_value == 4);
+    assert(o.captured_msg == "setting new value");
+
+    // disconnect the watcher and make sure it doesn't trigger
+    a.extendedSig.disconnect!"watch"(o);
+    a.value = 5;
+    assert(o.captured_value == 4);
+    assert(o.captured_msg == "setting new value");
+    //a.extendedSig.connect!Observer(o, (obj, msg, i) { obj.watch("Hahah", i); });
+    a.extendedSig.connect!Observer(o, (obj, msg, i) => obj.watch("Hahah", i) );
+
+    a.value = 7;
+    debug (signal) stderr.writeln("After asignment!");
+    assert(o.captured_value == 7);
+    assert(o.captured_msg == "Hahah");
+    a.extendedSig.disconnect(o); // Simply disconnect o, otherwise we would have to store the lamda somewhere if we want to disconnect later on.
+    // reconnect the watcher and make sure it triggers
+    a.extendedSig.connect!"watch"(o);
+    a.value = 6;
+    assert(o.captured_value == 6);
+    assert(o.captured_msg == "setting new value");
+
+    // destroy the underlying object and make sure it doesn't cause
+    // a crash or other problems
+    debug (signal) stderr.writefln("Disposing");
+    destroy(o);
+    debug (signal) stderr.writefln("Disposed");
+    a.value = 7;
+}
+
+unittest {
+    class Observer
+    {
+        int    i;
+        long   l;
+        string str;
+
+        void watchInt(string str, int i)
+        {
+            this.str = str;
+            this.i = i;
+        }
+
+        void watchLong(string str, long l)
+        {
+            this.str = str;
+            this.l = l;
+        }
+    }
+
+    class Bar
+    {
+        @property void value1(int v)  { _s1.emit("str1", v); }
+        @property void value2(int v)  { _s2.emit("str2", v); }
+        @property void value3(long v) { _s3.emit("str3", v); }
+
+        mixin(signal!(string, int) ("s1"));
+        mixin(signal!(string, int) ("s2"));
+        mixin(signal!(string, long)("s3"));
+    }
+
+    void test(T)(T a)
+    {
+        auto o1 = new Observer;
+        auto o2 = new Observer;
+        auto o3 = new Observer;
+
+        // connect the watcher and trigger it
+        a.s1.connect!"watchInt"(o1);
+        a.s2.connect!"watchInt"(o2);
+        a.s3.connect!"watchLong"(o3);
+
+        assert(!o1.i && !o1.l && !o1.str);
+        assert(!o2.i && !o2.l && !o2.str);
+        assert(!o3.i && !o3.l && !o3.str);
+
+        a.value1 = 11;
+        assert(o1.i == 11 && !o1.l && o1.str == "str1");
+        assert(!o2.i && !o2.l && !o2.str);
+        assert(!o3.i && !o3.l && !o3.str);
+        o1.i = -11; o1.str = "x1";
+
+        a.value2 = 12;
+        assert(o1.i == -11 && !o1.l && o1.str == "x1");
+        assert(o2.i == 12 && !o2.l && o2.str == "str2");
+        assert(!o3.i && !o3.l && !o3.str);
+        o2.i = -12; o2.str = "x2";
+
+        a.value3 = 13;
+        assert(o1.i == -11 && !o1.l && o1.str == "x1");
+        assert(o2.i == -12 && !o1.l && o2.str == "x2");
+        assert(!o3.i && o3.l == 13 && o3.str == "str3");
+        o3.l = -13; o3.str = "x3";
+
+        // disconnect the watchers and make sure it doesn't trigger
+        a.s1.disconnect!"watchInt"(o1);
+        a.s2.disconnect!"watchInt"(o2);
+        a.s3.disconnect!"watchLong"(o3);
+
+        a.value1 = 21;
+        a.value2 = 22;
+        a.value3 = 23;
+        assert(o1.i == -11 && !o1.l && o1.str == "x1");
+        assert(o2.i == -12 && !o1.l && o2.str == "x2");
+        assert(!o3.i && o3.l == -13 && o3.str == "x3");
+
+        // reconnect the watcher and make sure it triggers
+        a.s1.connect!"watchInt"(o1);
+        a.s2.connect!"watchInt"(o2);
+        a.s3.connect!"watchLong"(o3);
+
+        a.value1 = 31;
+        a.value2 = 32;
+        a.value3 = 33;
+        assert(o1.i == 31 && !o1.l && o1.str == "str1");
+        assert(o2.i == 32 && !o1.l && o2.str == "str2");
+        assert(!o3.i && o3.l == 33 && o3.str == "str3");
+
+        // destroy observers
+        destroy(o1);
+        destroy(o2);
+        destroy(o3);
+        a.value1 = 41;
+        a.value2 = 42;
+        a.value3 = 43;
+    }
+
+    test(new Bar);
+
+    class BarDerived: Bar
+    {
+        @property void value4(int v)  { _s4.emit("str4", v); }
+        @property void value5(int v)  { _s5.emit("str5", v); }
+        @property void value6(long v) { _s6.emit("str6", v); }
+
+        mixin(signal!(string, int) ("s4"));
+        mixin(signal!(string, int) ("s5"));
+        mixin(signal!(string, long)("s6"));
+    }
+
+    auto a = new BarDerived;
+
+    test!Bar(a);
+    test!BarDerived(a);
+
+    auto o4 = new Observer;
+    auto o5 = new Observer;
+    auto o6 = new Observer;
+
+    // connect the watcher and trigger it
+    a.s4.connect!"watchInt"(o4);
+    a.s5.connect!"watchInt"(o5);
+    a.s6.connect!"watchLong"(o6);
+
+    assert(!o4.i && !o4.l && !o4.str);
+    assert(!o5.i && !o5.l && !o5.str);
+    assert(!o6.i && !o6.l && !o6.str);
+
+    a.value4 = 44;
+    assert(o4.i == 44 && !o4.l && o4.str == "str4");
+    assert(!o5.i && !o5.l && !o5.str);
+    assert(!o6.i && !o6.l && !o6.str);
+    o4.i = -44; o4.str = "x4";
+
+    a.value5 = 45;
+    assert(o4.i == -44 && !o4.l && o4.str == "x4");
+    assert(o5.i == 45 && !o5.l && o5.str == "str5");
+    assert(!o6.i && !o6.l && !o6.str);
+    o5.i = -45; o5.str = "x5";
+
+    a.value6 = 46;
+    assert(o4.i == -44 && !o4.l && o4.str == "x4");
+    assert(o5.i == -45 && !o4.l && o5.str == "x5");
+    assert(!o6.i && o6.l == 46 && o6.str == "str6");
+    o6.l = -46; o6.str = "x6";
+
+    // disconnect the watchers and make sure it doesn't trigger
+    a.s4.disconnect!"watchInt"(o4);
+    a.s5.disconnect!"watchInt"(o5);
+    a.s6.disconnect!"watchLong"(o6);
+
+    a.value4 = 54;
+    a.value5 = 55;
+    a.value6 = 56;
+    assert(o4.i == -44 && !o4.l && o4.str == "x4");
+    assert(o5.i == -45 && !o4.l && o5.str == "x5");
+    assert(!o6.i && o6.l == -46 && o6.str == "x6");
+
+    // reconnect the watcher and make sure it triggers
+    a.s4.connect!"watchInt"(o4);
+    a.s5.connect!"watchInt"(o5);
+    a.s6.connect!"watchLong"(o6);
+
+    a.value4 = 64;
+    a.value5 = 65;
+    a.value6 = 66;
+    assert(o4.i == 64 && !o4.l && o4.str == "str4");
+    assert(o5.i == 65 && !o4.l && o5.str == "str5");
+    assert(!o6.i && o6.l == 66 && o6.str == "str6");
+
+    // destroy observers
+    destroy(o4);
+    destroy(o5);
+    destroy(o6);
+    a.value4 = 44;
+    a.value5 = 45;
+    a.value6 = 46;
+}
+
+unittest
+{
+    import std.stdio;
+
+    struct Property
+    {
+        alias value this;
+        mixin(signal!(int)("signal"));
+        @property int value()
+        {
+            return value_;
+        }
+        ref Property opAssign(int val)
+        {
+            debug (signal) writeln("Assigning int to property with signal: ", &this);
+            value_ = val;
+            _signal.emit(val);
+            return this;
+        }
+        private:
+        int value_;
+    }
+
+    void observe(int val)
+    {
+        debug (signal) writefln("observe: Wow! The value changed: %s", val);
+    }
+
+    class Observer
+    {
+        void observe(int val)
+        {
+            debug (signal) writefln("Observer: Wow! The value changed: %s", val);
+            debug (signal) writefln("Really! I must know I am an observer (old value was: %s)!", observed);
+            observed = val;
+            count++;
+        }
+        int observed;
+        int count;
+    }
+    Property prop;
+    void delegate(int) dg = (val) => observe(val);
+    prop.signal.strongConnect(dg);
+    assert(prop.signal._impl._slots.length==1);
+    Observer o=new Observer;
+    prop.signal.connect!"observe"(o);
+    assert(prop.signal._impl._slots.length==2);
+    debug (signal) writeln("Triggering on original property with value 8 ...");
+    prop=8;
+    assert(o.count==1);
+    assert(o.observed==prop);
+}
+
+unittest
+{
+    debug (signal) import std.stdio;
+    import std.conv;
+    Signal!() s1;
+    void testfunc(int id)
+    {
+        throw new Exception(to!string(id));
+    }
+    s1.strongConnect(() => testfunc(0));
+    s1.strongConnect(() => testfunc(1));
+    s1.strongConnect(() => testfunc(2));
+    try s1.emit();
+    catch(Exception e)
+    {
+        Throwable t=e;
+        int i=0;
+        while (t)
+        {
+            debug (signal) stderr.writefln("Caught exception (this is fine)");
+            assert(to!int(t.msg)==i);
+            t=t.next;
+            i++;
+        }
+        assert(i==3);
+    }
+}
+unittest
+{
+    class A
+    {
+        mixin(signal!(string, int)("s1"));
+    }
+
+    class B : A
+    {
+        mixin(signal!(string, int)("s2"));
     }
 }
 
-///
 unittest
 {
-    static assert(isOneOf!(int, float, string, const(int)));
-    static assert(isOneOf!(const(int), float, string, int));
-    static assert(!isOneOf!(int, float, string));
+    struct Test
+    {
+        mixin(signal!int("a", "public"));
+        mixin(signal!int("ap", "private"));
+        mixin(signal!int("app", "protected"));
+        mixin(signal!int("an", "none"));
+    }
+    debug (signal)
+    {
+        pragma(msg, signal!int("a", "public"));
+        pragma(msg, signal!(int, string, int[int])("a", "private"));
+        pragma(msg, signal!(int, string, int[int], float, double)("a", "protected"));
+        pragma(msg, signal!(int, string, int[int], float, double, long)("a", "none"));
+    }
 }
+
+unittest // Test nested emit/removal/addition ...
+{
+    Signal!() sig;
+    bool doEmit = true;
+    int counter = 0;
+    int slot3called = 0;
+    int slot3shouldcalled = 0;
+    void slot1()
+    {
+        doEmit = !doEmit;
+        if(!doEmit)
+            sig.emit();
+    }
+    void slot3()
+    {
+        slot3called++;
+    }
+    void slot2()
+    {
+        debug (signal) { import std.stdio; writefln("\nCALLED: %s, should called: %s", slot3called, slot3shouldcalled);}
+        assert (slot3called == slot3shouldcalled);
+        if ( ++counter < 100)
+            slot3shouldcalled += counter;
+        if ( counter < 100 )
+            sig.strongConnect(&slot3);
+    }
+    void slot4()
+    {
+        if ( counter == 100 )
+            sig.strongDisconnect(&slot3); // All connections dropped
+    }
+    sig.strongConnect(&slot1);
+    sig.strongConnect(&slot2);
+    sig.strongConnect(&slot4);
+    for(int i=0; i<1000; i++)
+        sig.emit();
+    debug (signal)
+    {
+        import std.stdio;
+        writeln("slot3called: ", slot3called);
+    }
+}
+/* vim: set ts=4 sw=4 expandtab : */

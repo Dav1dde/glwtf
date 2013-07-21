@@ -138,10 +138,10 @@ class BaseGLFWEventHandler : AEventHandler {
     protected bool[GLFW_MOUSE_BUTTON_LAST] mousemap;
 
     this() {
-        on_key_down.connect(&_on_key_down);
-        on_key_up.connect(&_on_key_up);
-        on_mouse_button_down.connect(&_on_mouse_button_down);
-        on_mouse_button_up.connect(&_on_mouse_button_up);
+        on_key_down.connect!"_on_key_down"(this);
+        on_key_up.connect!"_on_key_up"(this);
+        on_mouse_button_down.connect!"_on_mouse_button_down"(this);
+        on_mouse_button_up.connect!"_on_mouse_button_up"(this);
     }
 
     package void register_callbacks(GLFWwindow* window) {
