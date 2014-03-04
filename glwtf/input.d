@@ -52,13 +52,13 @@ extern(C) {
     void window_focus_callback(GLFWwindow* window, int focused) {
         AEventHandler ae = cast_userptr(window);
 
-        ae.on_focus.emit(focused == GLFW_PRESS);
+        ae.on_focus.emit(focused == 1);
     }
 
     void window_iconify_callback(GLFWwindow* window, int iconified) {
         AEventHandler ae = cast_userptr(window);
 
-        ae.on_iconify.emit(iconified == GLFW_PRESS); // TODO: test this
+        ae.on_iconify.emit(iconified == 1);
     }
 
     // user input //
