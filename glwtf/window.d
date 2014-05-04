@@ -8,7 +8,6 @@ private {
 
     import std.string : toStringz;
     import std.exception : enforceEx;
-    import std.functional : curry;
     import std.typecons : Tuple;
 }
 
